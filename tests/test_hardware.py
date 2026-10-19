@@ -175,27 +175,49 @@ def test_audio_input(device_index: int = -1, sample_rate: int = 16000, duration_
 
     dev_name = pa.get_device_info_by_host_api_device_index(0, selected_idx).get("name", "Unknown")
     print(f"\n[*] Testing Audio Capture on Device [{selected_idx}]: '{dev_name}'")
-    print(f"[*] Settings: {sample_rate}Hz, 16-bit Mono PCM, 1024 chunk size")
-
     chunk_size = 1024
+    stream = None
+    actual_rate = sample_rate
+
+    # Try requested rate, then default device rate, then 44100 and 48000
+    candidate_rates = [sample_rate]
     try:
-        stream = pa.open(
-            format=pyaudio.paInt16,
-            channels=1,
-            rate=sample_rate,
-            input=True,
-            input_device_index=selected_idx,
-            frames_per_buffer=chunk_size,
-        )
-    except Exception as e:
-        print(f"[-] Could not open PyAudio stream on device [{selected_idx}]: {e}")
+        dev_info = pa.get_device_info_by_host_api_device_index(0, selected_idx)
+        def_rate = int(dev_info.get("defaultSampleRate", 44100))
+        if def_rate not in candidate_rates:
+            candidate_rates.append(def_rate)
+    except Exception:
+        pass
+    for r in [44100, 48000, 16000]:
+        if r not in candidate_rates:
+            candidate_rates.append(r)
+
+    for rate in candidate_rates:
+        try:
+            stream = pa.open(
+                format=pyaudio.paInt16,
+                channels=1,
+                rate=rate,
+                input=True,
+                input_device_index=selected_idx,
+                frames_per_buffer=chunk_size,
+            )
+            actual_rate = rate
+            break
+        except Exception:
+            continue
+
+    if stream is None:
+        print(f"[-] Could not open PyAudio stream on device [{selected_idx}] on candidate rates {candidate_rates}")
         pa.terminate()
         return False
+
+    print(f"[*] Successfully opened audio stream at {actual_rate}Hz!")
 
     print(f"[*] Recording for {duration_seconds} seconds. Please SPEAK into the M-305 microphone...")
     print("    Live VU Meter (dBFS):")
 
-    total_chunks = int(sample_rate / chunk_size * duration_seconds)
+    total_chunks = int(actual_rate / chunk_size * duration_seconds)
     peak_db = -96.0
     detected_speech = False
 

@@ -185,6 +185,16 @@ class STTStreamManager:
         if not pcm_data:
             return
 
+        # Check audio volume before sending
+        from hardware.audio_input import AudioCapture
+        rms_db = AudioCapture.calculate_rms_db(pcm_data)
+        logger.info(f"[STT] Audio buffer volume level: {rms_db:.1f} dBFS")
+        if rms_db < -50.0:
+            logger.warning(
+                f"[STT] WARNING: Audio buffer volume is extremely low ({rms_db:.1f} dBFS - near silence). "
+                "Ensure the M-305 microphone physical switch is ON and unmuted in 'alsamixer'."
+            )
+
         # Package raw PCM into standard 16-bit WAV
         wav_io = io.BytesIO()
         try:
@@ -230,6 +240,8 @@ class STTStreamManager:
                     transcript = alt.get("transcript", "").strip()
                     words = alt.get("words", [])
 
+                    logger.info(f"[STT] Deepgram response: transcript='{transcript}' ({len(words)} words)")
+
                     if words:
                         self.ah_counter.process_words(words)
                         with self._lock:
@@ -239,7 +251,11 @@ class STTStreamManager:
                         with self._lock:
                             self._transcript_chunks.append(transcript)
                         self.grammarian.check_sentence_async(transcript)
-                        logger.info(f"[STT Final] \"{transcript}\"")
+                    else:
+                        logger.warning(
+                            "[STT] Deepgram returned an empty transcript. If you spoke, "
+                            "check microphone volume in 'alsamixer' (press F4 -> Space to unmute, Up Arrow to 100%)."
+                        )
             else:
                 logger.error(f"[STT] Deepgram API returned HTTP {response.status_code}: {response.text[:150]}")
         except Exception as e:

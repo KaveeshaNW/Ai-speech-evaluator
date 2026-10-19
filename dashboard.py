@@ -137,8 +137,9 @@ try:
     # Auto-refresh every N seconds
     st_autorefresh(interval=refresh_rate_sec * 1000, key="speech_evaluator_autorefresh")
 except ImportError:
-    # Graceful fallback: show a manual refresh button in sidebar
-    pass
+    # Native browser meta-refresh fallback: reloads the page every 3 seconds automatically!
+    st.markdown('<meta http-equiv="refresh" content="3">', unsafe_allow_html=True)
+    st.sidebar.caption("⚡ Auto-refresh active (browser meta tag)")
 
 
 # ------------------------------------------------------------------------------
@@ -356,7 +357,13 @@ full_transcript = transcript_summary.get("full_transcript", "")
 issues = grammarian.get("issues", [])
 
 if not full_transcript:
-    st.info("No speech transcript recorded for this session.")
+    st.warning(
+        "⚠️ **No words were detected in this audio recording.**\n\n"
+        "If you spoke into the microphone, check:\n"
+        "1. Is the physical switch on the M-305 microphone handle switched to **ON**?\n"
+        "2. Is the microphone cable plugged into the **MIC (pink)** input jack of the USB adapter?\n"
+        "3. Is the microphone unmuted in **alsamixer**? (Run `alsamixer`, press `F4` for Capture, press `Space` to unmute, and press `Up Arrow` to raise gain)."
+    )
 else:
     # Build highlighted transcript
     # Replace matched error context spans with highlighted HTML spans
