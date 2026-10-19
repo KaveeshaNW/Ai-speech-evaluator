@@ -16,9 +16,11 @@ echo " Configuring friendly network name: $NEW_NAME"
 echo "================================================================="
 
 # 1. Update system hostname
+echo "[*] Setting hostname to $NEW_NAME..."
 sudo hostnamectl set-hostname "$NEW_NAME"
 
 # 2. Update /etc/hosts for local loopback resolution
+echo "[*] Updating /etc/hosts..."
 if grep -q "127.0.1.1" /etc/hosts; then
     sudo sed -i "s/127\.0\.1\.1.*/127.0.1.1\t$NEW_NAME/" /etc/hosts
 else
@@ -27,25 +29,33 @@ fi
 
 # 3. Ensure avahi-daemon (mDNS broadcast) is running
 if ! command -v avahi-daemon &> /dev/null; then
-    echo "[*] Installing avahi-daemon..."
+    echo "[*] Installing avahi-daemon for .local resolution..."
     sudo apt-get update && sudo apt-get install -y avahi-daemon
 fi
 
 sudo systemctl enable avahi-daemon
 sudo systemctl restart avahi-daemon
 
-# 4. Optional port redirection: allow access on port 80 (default http) and port 8051
+# 4. Optional port redirection: allow access on port 80 and port 8051
 echo "[*] Configuring port redirection (80 and 8051 -> 8501)..."
-sudo iptables -t nat -C PREROUTING -p tcp --dport 80 -j REDIRECT --to-port 8501 2>/dev/null || \
-sudo iptables -t nat -A PREROUTING -p tcp --dport 80 -j REDIRECT --to-port 8501
+if ! command -v iptables &> /dev/null; then
+    echo "[*] Installing iptables package..."
+    sudo apt-get update -y && sudo apt-get install -y iptables || true
+fi
 
-sudo iptables -t nat -C PREROUTING -p tcp --dport 8051 -j REDIRECT --to-port 8501 2>/dev/null || \
-sudo iptables -t nat -A PREROUTING -p tcp --dport 8051 -j REDIRECT --to-port 8501
+if command -v iptables &> /dev/null; then
+    sudo iptables -t nat -C PREROUTING -p tcp --dport 80 -j REDIRECT --to-port 8501 2>/dev/null || \
+    sudo iptables -t nat -A PREROUTING -p tcp --dport 80 -j REDIRECT --to-port 8501 || true
+
+    sudo iptables -t nat -C PREROUTING -p tcp --dport 8051 -j REDIRECT --to-port 8501 2>/dev/null || \
+    sudo iptables -t nat -A PREROUTING -p tcp --dport 8051 -j REDIRECT --to-port 8501 || true
+    echo "[*] Port redirection active!"
+fi
 
 echo ""
 echo "================================================================="
 echo " SUCCESS! Your dashboard is now accessible at:"
-echo "   ⭐ http://ai-speech-evaluator.local"
 echo "   ⭐ http://ai-speech-evaluator.local:8501"
 echo "   ⭐ http://ai-speech-evaluator.local:8051"
+echo "   ⭐ http://ai-speech-evaluator.local"
 echo "================================================================="
