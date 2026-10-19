@@ -74,11 +74,25 @@ class STTStreamManager:
             return True
 
         try:
-            from deepgram import (
-                DeepgramClient,
-                LiveOptions,
-                LiveTranscriptionEvents,
-            )
+            from deepgram import DeepgramClient
+
+            # Locate LiveTranscriptionEvents
+            try:
+                from deepgram.clients.live.v1 import LiveTranscriptionEvents
+            except ImportError:
+                try:
+                    from deepgram import LiveTranscriptionEvents
+                except ImportError:
+                    from deepgram.clients.live.enums import LiveTranscriptionEvents
+
+            # Locate LiveOptions
+            try:
+                from deepgram.clients.live.v1 import LiveOptions
+            except ImportError:
+                try:
+                    from deepgram import LiveOptions
+                except ImportError:
+                    from deepgram.clients.live.v1.options import LiveOptions
 
             try:
                 from deepgram import DeepgramClientOptions
@@ -122,9 +136,17 @@ class STTStreamManager:
                 interim_results=False,
             )
 
-            addons = {"filler_words": "true"}
-            if not self._connection.start(options, addons=addons):
-                logger.warning("[STT] Deepgram connection start returned False. Falling back to simulation.")
+            started = False
+            try:
+                started = self._connection.start(options, addons={"filler_words": "true"})
+            except TypeError:
+                started = self._connection.start(options)
+            except Exception as e:
+                logger.error(f"[STT] Exception during connection start: {e}")
+                started = False
+
+            if not started:
+                logger.warning("[STT] Deepgram connection start returned False or failed. Falling back to simulation.")
                 self.simulate = True
                 self._is_connected = True
                 return False

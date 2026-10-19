@@ -9,10 +9,25 @@ import sys
 import logging
 from dataclasses import dataclass
 from typing import Optional
-from dotenv import load_dotenv
-
-# Load environment variables from .env file if present
-load_dotenv()
+# Load environment variables from .env file (with built-in fallback parser if python-dotenv is not installed)
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    _env_path = os.path.join(os.path.dirname(__file__), ".env")
+    if os.path.exists(_env_path):
+        try:
+            with open(_env_path, "r", encoding="utf-8") as _f:
+                for _line in _f:
+                    _line = _line.strip()
+                    if _line and not _line.startswith("#") and "=" in _line:
+                        _k, _v = _line.split("=", 1)
+                        _k = _k.strip()
+                        _v = _v.strip().strip("'\"")
+                        if _k not in os.environ:
+                            os.environ[_k] = _v
+        except Exception:
+            pass
 
 logger = logging.getLogger("speech_evaluator.config")
 
