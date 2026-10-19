@@ -36,7 +36,7 @@ st.markdown(
     }
     .sub-header {
         font-size: 1.05rem;
-        color: #555;
+        opacity: 0.85;
         margin-bottom: 1.5rem;
     }
     .score-card {
@@ -327,9 +327,9 @@ with f_col2:
             )
 
         html_table = f"""
-        <div style="max-height: 240px; overflow-y: auto; border: 1px solid #ddd; border-radius: 8px;">
-            <table style="width:100%; border-collapse:collapse; font-size:0.9rem;">
-                <thead style="background-color:#f8f9fa; position:sticky; top:0;">
+        <div style="max-height: 240px; overflow-y: auto; border: 1px solid rgba(128, 128, 128, 0.25); border-radius: 8px;">
+            <table style="width:100%; border-collapse:collapse; font-size:0.9rem; color: inherit;">
+                <thead style="background-color: rgba(255, 255, 255, 0.08); position:sticky; top:0;">
                     <tr>
                         <th style="padding:6px 12px; text-align:left;">Time</th>
                         <th style="padding:6px 12px; text-align:left;">Word / Phrase</th>
@@ -384,7 +384,7 @@ else:
         st.markdown("**Transcript (Grammatical Opportunities Highlighted):**")
         st.markdown(
             f"""
-            <div style="background-color: #fdfdfd; border: 1px solid #e0e0e0; border-radius: 8px; padding: 1.2rem; font-size: 1.05rem; line-height: 1.7; min-height: 200px;">
+            <div style="background-color: rgba(255, 255, 255, 0.05); color: inherit; border: 1px solid rgba(128, 128, 128, 0.25); border-radius: 8px; padding: 1.2rem; font-size: 1.05rem; line-height: 1.7; min-height: 160px;">
                 {highlighted_text}
             </div>
             """,
