@@ -51,31 +51,47 @@ class LCDController:
             self._is_initialized = True
             return
 
+        addresses_to_try = [self.address]
+        for alt_addr in [0x27, 0x3F, 0x38, 0x20]:
+            if alt_addr not in addresses_to_try:
+                addresses_to_try.append(alt_addr)
+
         try:
             from RPLCD.i2c import CharLCD
-
-            self._lcd = CharLCD(
-                i2c_expander="PCF8574",
-                address=self.address,
-                port=self.port,
-                cols=self.cols,
-                rows=self.rows,
-                dotsize=8,
-                charmap="A00",
-                auto_linebreaks=False,
-                backlight_enabled=True,
-            )
-            self._lcd.clear()
-            self._is_initialized = True
-            logger.info(f"[LCD] Hardware initialized at I2C address {hex(self.address)} on port {self.port}")
-        except Exception as e:
-            logger.warning(
-                f"[LCD] Failed to initialize physical I2C LCD ({e}). "
-                "Falling back to simulated display mode."
-            )
+        except ImportError:
+            logger.warning("[LCD] RPLCD not installed. Falling back to simulated display mode.")
             self.simulate = True
-            self._lcd = None
             self._is_initialized = True
+            return
+
+        for addr in addresses_to_try:
+            try:
+                self._lcd = CharLCD(
+                    i2c_expander="PCF8574",
+                    address=addr,
+                    port=self.port,
+                    cols=self.cols,
+                    rows=self.rows,
+                    dotsize=8,
+                    charmap="A00",
+                    auto_linebreaks=False,
+                    backlight_enabled=True,
+                )
+                self._lcd.clear()
+                self._is_initialized = True
+                self.address = addr
+                logger.info(f"[LCD] Hardware initialized at I2C address {hex(addr)} on port {self.port}")
+                return
+            except Exception as e:
+                logger.debug(f"[LCD] Address {hex(addr)} failed: {e}")
+
+        logger.warning(
+            f"[LCD] Failed to initialize physical I2C LCD on addresses {[hex(a) for a in addresses_to_try]}. "
+            "Falling back to simulated display mode. (Hint: run 'sudo i2cdetect -y 1' and check SDA/SCL wires)."
+        )
+        self.simulate = True
+        self._lcd = None
+        self._is_initialized = True
 
     def _pad_line(self, text: str) -> str:
         """Truncate or right-pad string to exactly self.cols characters."""

@@ -120,38 +120,6 @@ class ReportGenerator:
 
         feedback_notes.append(pacing_eval["recommendation"])
 
-        report_data: Dict[str, Any] = {
-            "session_id": session_id,
-            "generated_at": datetime.now().isoformat(),
-            "timing": {
-                "start_time_epoch": round(start_time, 2),
-                "end_time_epoch": round(end_time, 2),
-                "duration_seconds": round(duration, 2),
-                "formatted_duration": formatted_time,
-                "timing_status": timing_status,
-            },
-            "transcript_summary": {
-                "full_transcript": full_transcript,
-                "total_words": word_count,
-                "words_per_minute": wpm,
-                "pacing_rating": pacing_eval["rating"],
-            },
-            "ah_counter": {
-                "total_fillers": total_fillers,
-                "vocalized_pauses_count": vocalized_pauses,
-                "verbal_crutches_count": verbal_crutches,
-                "fillers_per_minute": fillers_per_min,
-                "filler_density_percent": filler_density_pct,
-                "frequency_breakdown": dict(
-                    sorted(filler_breakdown.items(), key=lambda x: x[1], reverse=True)
-                ),
-                "timeline_events": timeline,
-            },
-            "grammarian": {
-                "total_errors": total_errors,
-                "error_density_per_100_words": errors_per_100_words,
-                "issues": grammar_issues,
-            },
         # Compute Overall Speech Score (0 - 100)
         base_score = 100.0
         # Deductions

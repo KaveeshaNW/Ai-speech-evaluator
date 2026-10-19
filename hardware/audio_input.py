@@ -202,17 +202,32 @@ class AudioCapture:
         import pyaudio
 
         if not self.simulate and self._pyaudio_instance is not None:
-            try:
-                self._stream = self._pyaudio_instance.open(
-                    format=pyaudio.paInt16,
-                    channels=self.channels,
-                    rate=self.sample_rate,
-                    input=True,
-                    input_device_index=self._actual_device_index if self._actual_device_index >= 0 else None,
-                    frames_per_buffer=self.chunk_size,
-                )
-            except Exception as e:
-                logger.error(f"[Audio] Failed to open PyAudio input stream ({e}). Switching to simulation.")
+            # USB audio dongles often only support 44100Hz or 48000Hz in ALSA hw mode
+            rates_to_try = [self.sample_rate]
+            for candidate in [44100, 48000, 16000, 8000]:
+                if candidate not in rates_to_try:
+                    rates_to_try.append(candidate)
+
+            opened = False
+            for rate in rates_to_try:
+                try:
+                    self._stream = self._pyaudio_instance.open(
+                        format=pyaudio.paInt16,
+                        channels=self.channels,
+                        rate=rate,
+                        input=True,
+                        input_device_index=self._actual_device_index if self._actual_device_index >= 0 else None,
+                        frames_per_buffer=self.chunk_size,
+                    )
+                    self.sample_rate = rate
+                    opened = True
+                    logger.info(f"[Audio] PyAudio stream opened successfully at {rate}Hz ({self.channels}ch, chunk={self.chunk_size}).")
+                    break
+                except Exception as ex:
+                    logger.debug(f"[Audio] Rate {rate}Hz failed on device {self._actual_device_index}: {ex}")
+
+            if not opened:
+                logger.error("[Audio] Failed to open PyAudio input stream on all candidate sample rates. Switching to simulation.")
                 self.simulate = True
 
         # Main acquisition loop

@@ -9,7 +9,7 @@ import json
 import logging
 import threading
 import time
-from typing import Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 from services.ah_counter import AhCounter
 from services.grammarian import GrammarianEngine
 
@@ -76,13 +76,17 @@ class STTStreamManager:
         try:
             from deepgram import (
                 DeepgramClient,
-                DeepgramClientOptions,
                 LiveOptions,
                 LiveTranscriptionEvents,
             )
 
-            client_config = DeepgramClientOptions(options={"keepalive": "true"})
-            deepgram_client = DeepgramClient(self.api_key, client_config)
+            try:
+                from deepgram import DeepgramClientOptions
+                client_config = DeepgramClientOptions(options={"keepalive": "true"})
+                deepgram_client = DeepgramClient(self.api_key, client_config)
+            except Exception:
+                deepgram_client = DeepgramClient(self.api_key)
+
             self._connection = deepgram_client.listen.websocket.v("1")
 
             # Register event handlers

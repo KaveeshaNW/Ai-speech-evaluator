@@ -188,10 +188,11 @@ class MainSpeechEvaluator:
         # Reset evaluation services
         self.ah_counter.reset()
         self.grammarian.reset()
-        self.stt_stream.start_session()
 
-        # Start audio recording
+        # Start audio recording first to negotiate hardware sample rate
         self.audio.start(on_data=self._on_audio_data)
+        self.stt_stream.sample_rate = self.audio.sample_rate
+        self.stt_stream.start_session()
 
         # Start 1Hz timer-only LCD update worker
         self._launch_lcd_timer_worker()
