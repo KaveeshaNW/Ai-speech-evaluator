@@ -366,17 +366,28 @@ if not full_transcript:
     )
 else:
     # Build highlighted transcript
-    # Replace matched error context spans with highlighted HTML spans
+    # Highlight the specific errant token/phrase within its sentence context
     highlighted_text = full_transcript
     for idx, issue in enumerate(issues):
         context_text = issue.get("context_text", "")
+        c_off = int(issue.get("context_offset", 0))
+        c_len = int(issue.get("length", 0))
+
         if context_text and context_text in highlighted_text:
-            replacement = (
-                f"<span class='grammar-error' title='Issue #{idx+1}: {issue.get('message', '')}'>"
-                f"{context_text}</span>"
-            )
-            # Replace only first occurrence
-            highlighted_text = highlighted_text.replace(context_text, replacement, 1)
+            if 0 <= c_off < len(context_text) and (c_off + c_len) <= len(context_text) and c_len > 0:
+                err_word = context_text[c_off : c_off + c_len]
+                highlighted_context = (
+                    context_text[:c_off]
+                    + f"<span class='grammar-error' title='Issue #{idx+1}: {issue.get('message', '')}'>{err_word}</span>"
+                    + context_text[c_off + c_len :]
+                )
+                highlighted_text = highlighted_text.replace(context_text, highlighted_context, 1)
+            else:
+                replacement = (
+                    f"<span class='grammar-error' title='Issue #{idx+1}: {issue.get('message', '')}'>"
+                    f"{context_text}</span>"
+                )
+                highlighted_text = highlighted_text.replace(context_text, replacement, 1)
 
     t_col1, t_col2 = st.columns([3, 2])
 

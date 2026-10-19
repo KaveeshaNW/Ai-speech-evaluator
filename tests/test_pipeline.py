@@ -220,6 +220,68 @@ class TestGrammarianEngine(unittest.TestCase):
         # Should only have processed once due to hash deduplication
         self.assertEqual(self.grammarian.get_error_count(), 1)
 
+    def test_chunk_text_under_limit(self):
+        """Verify chunk_text splits large text into pieces strictly <= 1000 characters."""
+        long_speech = (
+            "Good evening fellow Toastmasters and honored guests. "
+            "Public speaking is an extraordinary journey that requires vulnerability, preparation, and passion. "
+        ) * 40  # ~6,000 characters
+        self.assertGreater(len(long_speech), 5000)
+
+        chunks = GrammarianEngine.chunk_text(long_speech, max_chars=1000)
+        self.assertGreater(len(chunks), 1)
+        for i, chunk in enumerate(chunks):
+            self.assertLessEqual(
+                len(chunk),
+                1000,
+                f"Chunk {i} exceeded 1000 chars (was {len(chunk)})",
+            )
+            self.assertGreater(len(chunk), 0)
+
+    @patch("requests.Session.post")
+    def test_large_text_chunking_sync_no_413(self, mock_post):
+        """Verify that a 7,000 character transcript is chunked and posted without exceeding limits."""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "matches": [
+                {
+                    "message": "Stylistic improvement.",
+                    "offset": 0,
+                    "length": 4,
+                    "rule": {"id": "STYLE_RULE"},
+                    "replacements": [{"value": "better"}],
+                    "context": {"text": "Good evening", "offset": 0, "length": 4},
+                }
+            ]
+        }
+        mock_post.return_value = mock_response
+
+        # 7,000 character speech text
+        speech_text = "Good evening fellow Toastmasters. This is an inspiring story. " * 115
+        self.assertGreater(len(speech_text), 7000)
+
+        issues = self.grammarian.check_text_sync(speech_text)
+        # All posted payloads must have text <= 1000 chars
+        for call_args in mock_post.call_args_list:
+            data = call_args.kwargs.get("data", {})
+            sent_text = data.get("text", "")
+            self.assertLessEqual(len(sent_text), 1000)
+
+        self.assertGreaterEqual(len(issues), 1)
+
+    @patch("requests.Session.post")
+    def test_wait_completion(self, mock_post):
+        """Verify wait_completion blocks until all active background tasks finish."""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"matches": []}
+        mock_post.return_value = mock_response
+
+        self.grammarian.check_sentence_async("Testing completion synchronization.")
+        self.grammarian.wait_completion(timeout=5.0)
+        self.assertEqual(len(self.grammarian._active_futures), 0)
+
 
 class TestReportGenerator(unittest.TestCase):
     """Test suite for Toastmasters JSON Evaluation Report generation."""

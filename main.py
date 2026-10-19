@@ -230,8 +230,8 @@ class MainSpeechEvaluator:
         self.stt_stream.sample_rate = self.audio.sample_rate
         self.stt_stream.stop_session()
 
-        # 4. Grace window (1.5s) for in-flight LanguageTool requests
-        time.sleep(1.5)
+        # 4. Wait for any in-flight LanguageTool grammar analysis to finish
+        self.grammarian.wait_completion(timeout=12.0)
 
         # 5. Compile full transcript and write evaluation_report.json
         full_transcript = self.stt_stream.get_full_transcript()
