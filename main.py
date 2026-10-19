@@ -66,19 +66,11 @@ class MainSpeechEvaluator:
             username=self.config.languagetool_username,
             language=self.config.languagetool_language,
         )
-        self.stt_stream = STTStreamManager(
-            api_key=self.config.deepgram_api_key,
-            ah_counter=self.ah_counter,
-            grammarian=self.grammarian,
-            sample_rate=self.config.audio_sample_rate,
-            channels=self.config.audio_channels,
-            simulate=self.config.simulate_hardware or not self.config.is_deepgram_configured(),
-        )
         self.report_generator = ReportGenerator(
             output_dir=self.config.report_output_dir
         )
 
-        # Hardware drivers (Timer-Only LCD)
+        # Hardware drivers
         self.lcd = LCDController(
             address=self.config.lcd_i2c_address,
             port=self.config.lcd_i2c_port,
@@ -93,6 +85,16 @@ class MainSpeechEvaluator:
             chunk_size=self.config.audio_chunk_size,
             on_data_callback=self._on_audio_data,
             simulate=self.config.simulate_hardware,
+        )
+
+        # Initialize STT stream with actual hardware sample rate
+        self.stt_stream = STTStreamManager(
+            api_key=self.config.deepgram_api_key,
+            ah_counter=self.ah_counter,
+            grammarian=self.grammarian,
+            sample_rate=self.audio.sample_rate,
+            channels=self.config.audio_channels,
+            simulate=self.config.simulate_hardware or not self.config.is_deepgram_configured(),
         )
         self.switch = SwitchController(
             gpio_pin=self.config.switch_gpio_pin,
@@ -225,6 +227,7 @@ class MainSpeechEvaluator:
         self.lcd.display_timer(final_time_str, self.STATE_EVALUATING)
 
         # 3. Stop STT session and close stream
+        self.stt_stream.sample_rate = self.audio.sample_rate
         self.stt_stream.stop_session()
 
         # 4. Grace window (1.5s) for in-flight LanguageTool requests

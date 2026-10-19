@@ -56,6 +56,27 @@ class AudioCapture:
 
             self._pyaudio_instance = pyaudio.PyAudio()
             self._actual_device_index = self._resolve_device_index()
+
+            # Probe hardware supported sample rate at boot
+            rates_to_try = [self.sample_rate]
+            for candidate in [44100, 48000, 16000, 8000]:
+                if candidate not in rates_to_try:
+                    rates_to_try.append(candidate)
+
+            for r in rates_to_try:
+                try:
+                    dev_idx = self._actual_device_index if self._actual_device_index >= 0 else None
+                    if self._pyaudio_instance.is_format_supported(
+                        r,
+                        input_device=dev_idx,
+                        input_channels=self.channels,
+                        input_format=pyaudio.paInt16,
+                    ):
+                        self.sample_rate = r
+                        break
+                except Exception:
+                    continue
+
             logger.info(
                 f"[Audio] PyAudio initialized. Resolved device index: {self._actual_device_index} "
                 f"({self.sample_rate}Hz, {self.channels}ch, chunk={self.chunk_size})"
