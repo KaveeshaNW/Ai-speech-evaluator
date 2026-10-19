@@ -8,4 +8,5 @@ __pycache__/
 .venv/
 env/
 speech_env/
+logs/
 .DS_Store

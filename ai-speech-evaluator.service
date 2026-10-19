@@ -1,21 +1,18 @@
 [Unit]
 Description=AI Speech Evaluator - Toastmasters Embedded Assistant
-After=network-online.target sound.target
-Wants=network-online.target
+After=network.target sound.target
+Wants=network.target
 
 [Service]
 Type=simple
-User=pi
-Group=pi
-WorkingDirectory=/home/pi/ai-speech-evaluator
-EnvironmentFile=/home/pi/ai-speech-evaluator/.env
-ExecStart=/home/pi/ai-speech-evaluator/venv/bin/python3 main.py
-Restart=on-failure
-RestartSec=5
+User=astro
+Group=astro
+WorkingDirectory=/home/astro/Ai-speech evaluator/Ai-speech-evaluator
+ExecStart=/bin/bash "/home/astro/Ai-speech evaluator/Ai-speech-evaluator/run_app.sh"
+Restart=always
+RestartSec=3
 StandardOutput=journal
 StandardError=journal
-
-# Security and hardware isolation
 SupplementaryGroups=i2c gpio audio
 
 [Install]

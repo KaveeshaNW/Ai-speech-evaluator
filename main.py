@@ -131,11 +131,13 @@ class MainSpeechEvaluator:
         ]
 
         try:
+            log_dir = os.path.join(os.path.dirname(__file__), "logs")
+            os.makedirs(log_dir, exist_ok=True)
+            self._streamlit_log = open(os.path.join(log_dir, "streamlit.log"), "a", encoding="utf-8")
             self._streamlit_proc = subprocess.Popen(
                 cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
+                stdout=self._streamlit_log,
+                stderr=self._streamlit_log,
             )
             logger.info(f"[Main] Streamlit dashboard spawned (PID {self._streamlit_proc.pid}). Accessible at http://0.0.0.0:8501")
         except Exception as e:
@@ -327,6 +329,11 @@ class MainSpeechEvaluator:
                 self._streamlit_proc.kill()
             finally:
                 self._streamlit_proc = None
+                if hasattr(self, "_streamlit_log") and self._streamlit_log:
+                    try:
+                        self._streamlit_log.close()
+                    except Exception:
+                        pass
 
         # 2. Stop switch monitoring
         try:
