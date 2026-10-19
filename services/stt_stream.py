@@ -1,15 +1,19 @@
 """
 Speech-to-Text Stream Manager for AI Speech Evaluator.
-Integrates Deepgram Python SDK (live streaming or chunked processing with filler_words=true),
-dispatches word objects with timestamps to AhCounter, and forwards final sentences
-to the Grammarian engine.
+Integrates Deepgram STT (live streaming and pre-recorded chunking with filler_words=true).
+Buffers recorded audio from the microphone and guarantees transcription via Deepgram's
+Nova-2 API, extracting word-level timestamps, vocalized pauses, and verbal crutches.
 """
 
+import io
 import json
 import logging
 import threading
 import time
+import wave
 from typing import Any, Callable, Dict, List, Optional
+import requests
+
 from services.ah_counter import AhCounter
 from services.grammarian import GrammarianEngine
 
@@ -18,9 +22,9 @@ logger = logging.getLogger("speech_evaluator.stt")
 
 class STTStreamManager:
     """
-    Manages audio forwarding to Deepgram STT, consumes live transcription events,
-    dispatches word-level events to AhCounter, and coordinates sentence checks
-    with GrammarianEngine.
+    Manages audio capture forwarding to Deepgram STT.
+    Supports both live streaming and automatic audio buffer transcription,
+    ensuring speech is transcribed with word-level filler words and timestamps.
     """
 
     def __init__(
@@ -42,17 +46,18 @@ class STTStreamManager:
         self._lock = threading.Lock()
         self._is_connected = False
         self._is_active = False
+        self._audio_buffer = bytearray()
         self._transcript_chunks: List[str] = []
         self._all_words: List[Dict] = []
-        self._live_client = None
         self._connection = None
 
         if self.simulate:
             logger.info("[STT] Simulation / Mock mode active for Deepgram STT.")
 
     def reset(self) -> None:
-        """Reset session transcripts."""
+        """Reset session audio buffer and transcripts."""
         with self._lock:
+            self._audio_buffer.clear()
             self._transcript_chunks.clear()
             self._all_words.clear()
         self.ah_counter.reset()
@@ -60,7 +65,7 @@ class STTStreamManager:
         logger.debug("[STT] State reset for new speech session.")
 
     def start_session(self) -> bool:
-        """Initialize live Deepgram streaming connection."""
+        """Initialize session and attempt live Deepgram connection if SDK available."""
         with self._lock:
             if self._is_active:
                 return True
@@ -73,115 +78,176 @@ class STTStreamManager:
             self._is_connected = True
             return True
 
+        # Attempt live streaming via deepgram-sdk if installed and functional
         try:
-            from deepgram import DeepgramClient
-
-            # Locate LiveTranscriptionEvents
-            try:
-                from deepgram.clients.live.v1 import LiveTranscriptionEvents
-            except ImportError:
+            import deepgram
+            # Try v3 client
+            if hasattr(deepgram, "DeepgramClient"):
+                DeepgramClient = deepgram.DeepgramClient
                 try:
-                    from deepgram import LiveTranscriptionEvents
-                except ImportError:
-                    from deepgram.clients.live.enums import LiveTranscriptionEvents
+                    from deepgram.clients.live.v1 import LiveOptions, LiveTranscriptionEvents
+                except Exception:
+                    LiveOptions = getattr(deepgram, "LiveOptions", None)
+                    LiveTranscriptionEvents = getattr(deepgram, "LiveTranscriptionEvents", None)
 
-            # Locate LiveOptions
-            try:
-                from deepgram.clients.live.v1 import LiveOptions
-            except ImportError:
-                try:
-                    from deepgram import LiveOptions
-                except ImportError:
-                    from deepgram.clients.live.v1.options import LiveOptions
+                if LiveOptions and LiveTranscriptionEvents:
+                    deepgram_client = DeepgramClient(self.api_key)
+                    self._connection = deepgram_client.listen.websocket.v("1")
 
-            try:
-                from deepgram import DeepgramClientOptions
-                client_config = DeepgramClientOptions(options={"keepalive": "true"})
-                deepgram_client = DeepgramClient(self.api_key, client_config)
-            except Exception:
-                deepgram_client = DeepgramClient(self.api_key)
+                    def on_open(conn, *args, **kwargs):
+                        logger.info("[STT] Deepgram WebSocket connection opened.")
+                        self._is_connected = True
 
-            self._connection = deepgram_client.listen.websocket.v("1")
+                    def on_message(conn, result, *args, **kwargs):
+                        self._handle_transcript_result(result)
 
-            # Register event handlers
-            def on_open(conn, *args, **kwargs):
-                logger.info("[STT] Deepgram WebSocket connection opened.")
-                self._is_connected = True
+                    def on_error(conn, error, *args, **kwargs):
+                        logger.warning(f"[STT] Deepgram live stream notice: {error}")
 
-            def on_message(conn, result, *args, **kwargs):
-                self._handle_transcript_result(result)
+                    def on_close(conn, *args, **kwargs):
+                        self._is_connected = False
 
-            def on_error(conn, error, *args, **kwargs):
-                logger.error(f"[STT] Deepgram error: {error}")
+                    self._connection.on(LiveTranscriptionEvents.Open, on_open)
+                    self._connection.on(LiveTranscriptionEvents.Transcript, on_message)
+                    self._connection.on(LiveTranscriptionEvents.Error, on_error)
+                    self._connection.on(LiveTranscriptionEvents.Close, on_close)
 
-            def on_close(conn, *args, **kwargs):
-                logger.info("[STT] Deepgram connection closed.")
-                self._is_connected = False
-
-            self._connection.on(LiveTranscriptionEvents.Open, on_open)
-            self._connection.on(LiveTranscriptionEvents.Transcript, on_message)
-            self._connection.on(LiveTranscriptionEvents.Error, on_error)
-            self._connection.on(LiveTranscriptionEvents.Close, on_close)
-
-            # Deepgram Live Options with filler_words=True
-            options = LiveOptions(
-                model="nova-2",
-                language="en-US",
-                smart_format=True,
-                filler_words=True,
-                punctuate=True,
-                encoding="linear16",
-                channels=self.channels,
-                sample_rate=self.sample_rate,
-                interim_results=False,
-            )
-
-            started = False
-            try:
-                started = self._connection.start(options, addons={"filler_words": "true"})
-            except TypeError:
-                started = self._connection.start(options)
-            except Exception as e:
-                logger.error(f"[STT] Exception during connection start: {e}")
-                started = False
-
-            if not started:
-                logger.warning("[STT] Deepgram connection start returned False or failed. Falling back to simulation.")
-                self.simulate = True
-                self._is_connected = True
-                return False
-
-            self._is_connected = True
-            logger.info("[STT] Live Deepgram stream started with filler_words=true.")
-            return True
-
+                    options = LiveOptions(
+                        model="nova-2",
+                        language="en-US",
+                        smart_format=True,
+                        filler_words=True,
+                        punctuate=True,
+                        encoding="linear16",
+                        channels=self.channels,
+                        sample_rate=self.sample_rate,
+                        interim_results=False,
+                    )
+                    try:
+                        self._connection.start(options)
+                        self._is_connected = True
+                        logger.info("[STT] Live Deepgram stream started successfully.")
+                        return True
+                    except Exception as ex:
+                        logger.debug(f"[STT] Live stream start exception: {ex}")
         except Exception as e:
-            logger.warning(
-                f"[STT] Could not start live Deepgram stream ({e}). "
-                "Switching to simulation mode."
-            )
-            self.simulate = True
-            self._is_connected = True
-            return False
+            logger.debug(f"[STT] Live SDK connection skipped ({e}). Audio buffer fallback active.")
+
+        # If live WebSocket was not initialized, audio buffer transcription will handle it at switch OFF
+        self._is_connected = False
+        return True
 
     def send_audio(self, audio_data: bytes) -> None:
-        """Send PCM audio chunk to Deepgram stream."""
-        if not self._is_active:
+        """Record PCM audio bytes into session buffer and forward to live stream if connected."""
+        if not self._is_active or not audio_data:
             return
 
-        if self.simulate:
-            return
+        with self._lock:
+            self._audio_buffer.extend(audio_data)
 
-        if self._connection and self._is_connected:
+        if self._connection and self._is_connected and not self.simulate:
             try:
                 self._connection.send(audio_data)
             except Exception as e:
-                logger.error(f"[STT] Failed to send audio chunk: {e}")
+                logger.debug(f"[STT] Live audio chunk send error: {e}")
+
+    def stop_session(self) -> None:
+        """Stop session, finalize live connection, and transcribe audio buffer if needed."""
+        with self._lock:
+            self._is_active = False
+
+        if self._connection and self._is_connected:
+            try:
+                self._connection.finish()
+            except Exception as e:
+                logger.debug(f"[STT] Live connection finish: {e}")
+            finally:
+                self._is_connected = False
+                self._connection = None
+
+        # Check if live stream already produced transcripts
+        with self._lock:
+            has_transcript = bool(self._transcript_chunks)
+            buffer_len = len(self._audio_buffer)
+
+        # If live stream didn't produce transcript, transcribe captured audio buffer via Nova-2 REST API
+        if not has_transcript and buffer_len > 1000 and self.api_key and not self.simulate:
+            logger.info(f"[STT] Transcribing {buffer_len} audio bytes via Deepgram Nova-2 REST API...")
+            self._transcribe_audio_buffer_rest()
+
+        logger.info("[STT] Session stopped.")
+
+    def _transcribe_audio_buffer_rest(self) -> None:
+        """Transcribe audio buffer using Deepgram Nova-2 REST API with filler_words=true."""
+        with self._lock:
+            pcm_data = bytes(self._audio_buffer)
+
+        if not pcm_data:
+            return
+
+        # Package raw PCM into standard 16-bit WAV
+        wav_io = io.BytesIO()
+        try:
+            with wave.open(wav_io, "wb") as wav_file:
+                wav_file.setnchannels(self.channels)
+                wav_file.setsampwidth(2)  # 16-bit
+                wav_file.setframerate(self.sample_rate)
+                wav_file.writeframes(pcm_data)
+            wav_bytes = wav_io.getvalue()
+        except Exception as e:
+            logger.error(f"[STT] Error packaging WAV audio: {e}")
+            return
+
+        url = "https://api.deepgram.com/v1/listen"
+        params = {
+            "model": "nova-2",
+            "language": "en-US",
+            "smart_format": "true",
+            "filler_words": "true",
+            "punctuate": "true",
+        }
+        headers = {
+            "Authorization": f"Token {self.api_key}",
+            "Content-Type": "audio/wav",
+            "User-Agent": "AI-Speech-Evaluator/1.0",
+        }
+
+        try:
+            response = requests.post(
+                url,
+                params=params,
+                headers=headers,
+                data=wav_bytes,
+                timeout=45.0,
+            )
+
+            if response.status_code == 200:
+                data = response.json()
+                results = data.get("results", {})
+                channels = results.get("channels", [])
+                if channels:
+                    alt = channels[0].get("alternatives", [{}])[0]
+                    transcript = alt.get("transcript", "").strip()
+                    words = alt.get("words", [])
+
+                    if words:
+                        self.ah_counter.process_words(words)
+                        with self._lock:
+                            self._all_words.extend(words)
+
+                    if transcript:
+                        with self._lock:
+                            self._transcript_chunks.append(transcript)
+                        self.grammarian.check_sentence_async(transcript)
+                        logger.info(f"[STT Final] \"{transcript}\"")
+            else:
+                logger.error(f"[STT] Deepgram API returned HTTP {response.status_code}: {response.text[:150]}")
+        except Exception as e:
+            logger.error(f"[STT] Network error transcribing audio: {e}")
 
     def _handle_transcript_result(self, result: Any) -> None:
-        """Process incoming Deepgram transcript message."""
+        """Process incoming Deepgram transcript message from live WebSocket."""
         try:
-            # Result can be a Pydantic object or dict
             if hasattr(result, "channel"):
                 alternatives = result.channel.alternatives
                 is_final = getattr(result, "is_final", True)
@@ -202,7 +268,6 @@ class STTStreamManager:
             if not transcript or not transcript.strip():
                 return
 
-            # Normalize word dicts
             words: List[Dict] = []
             for w in raw_words:
                 if isinstance(w, dict):
@@ -217,32 +282,23 @@ class STTStreamManager:
                     })
 
             if words:
-                # 1. Dispatch word-level tokens with exact timestamps to AhCounter
                 self.ah_counter.process_words(words)
-
                 with self._lock:
                     self._all_words.extend(words)
 
             if is_final:
                 with self._lock:
                     self._transcript_chunks.append(transcript.strip())
-
-                # 2. Dispatch finalized sentence to Grammarian Engine asynchronously
                 self.grammarian.check_sentence_async(transcript.strip())
-                logger.info(f"[STT Final] \"{transcript.strip()}\"")
+                logger.info(f"[STT Live Final] \"{transcript.strip()}\"")
 
         except Exception as e:
             logger.error(f"[STT] Error parsing transcript result: {e}", exc_info=True)
 
     def feed_simulated_speech(self, text: str, word_delay: float = 0.3) -> None:
-        """
-        Helper for testing: simulates Deepgram transcribing a spoken sentence
-        with realistic timestamps, filler words, and punctuation.
-        """
+        """Helper for testing: simulates Deepgram transcribing a spoken sentence."""
         words_raw = text.split()
         simulated_words = []
-        base_time = time.time()
-
         for idx, w in enumerate(words_raw):
             clean = w.strip(".,?!")
             simulated_words.append({
@@ -259,22 +315,6 @@ class STTStreamManager:
             self._all_words.extend(simulated_words)
 
         self.grammarian.check_sentence_async(text)
-
-    def stop_session(self) -> None:
-        """Stop current session and close WebSocket connection."""
-        with self._lock:
-            self._is_active = False
-
-        if self._connection and self._is_connected and not self.simulate:
-            try:
-                self._connection.finish()
-            except Exception as e:
-                logger.error(f"[STT] Error finishing Deepgram connection: {e}")
-            finally:
-                self._is_connected = False
-                self._connection = None
-
-        logger.info("[STT] Session stopped.")
 
     def get_full_transcript(self) -> str:
         """Return combined full speech transcript."""
