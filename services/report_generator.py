@@ -22,8 +22,9 @@ class ReportGenerator:
     with timeline breakdowns, pacing stats, and grammar recommendations.
     """
 
-    def __init__(self, output_dir: str = "reports"):
+    def __init__(self, output_dir: str = "reports", latest_filepath: Optional[str] = None):
         self.output_dir = output_dir
+        self.latest_filepath = latest_filepath or os.path.join(os.getcwd(), "evaluation_report.json")
         os.makedirs(self.output_dir, exist_ok=True)
 
     @staticmethod
@@ -187,7 +188,7 @@ class ReportGenerator:
         filepath = os.path.join(self.output_dir, filename)
 
         # 2. Write latest evaluation_report.json for the Streamlit dashboard
-        latest_filepath = os.path.join(os.getcwd(), "evaluation_report.json")
+        latest_filepath = self.latest_filepath
         output_latest_path = os.path.join(self.output_dir, "evaluation_report.json")
 
         try:

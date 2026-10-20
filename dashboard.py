@@ -421,26 +421,29 @@ if current_view == "🎙️ Live Speech Evaluation":
 
 
 # ------------------------------------------------------------------------------
-# 7. Sidebar: Session Selector (Live Speech Mode)
+# 7. Sidebar: Live Session Status (Directly uses current session, no JSON dropdown)
 # ------------------------------------------------------------------------------
 if current_view == "🎙️ Live Speech Evaluation":
-    available_reports = get_available_reports()
+    # Always target current / latest evaluation report
     selected_file = "evaluation_report.json"
+    if not os.path.exists(selected_file):
+        rep_alt = os.path.join("reports", "evaluation_report.json")
+        if os.path.exists(rep_alt):
+            selected_file = rep_alt
+        else:
+            archived = glob.glob("reports/speech_report_*.json")
+            if archived:
+                archived.sort(key=lambda x: os.path.getmtime(x) if os.path.exists(x) else 0, reverse=True)
+                selected_file = archived[0]
 
-    if available_reports:
-        selected_file = st.sidebar.selectbox(
-            "Select Speech Session:",
-            available_reports,
-            index=0,
-            format_func=lambda x: "Current / Latest Session" if x == "evaluation_report.json" else os.path.basename(x),
-        )
-        if os.path.exists(selected_file):
-            mtime = datetime.fromtimestamp(os.path.getmtime(selected_file)).strftime("%Y-%m-%d %H:%M:%S")
-            st.sidebar.caption(f"Last updated: {mtime}")
+    st.sidebar.markdown("**Session Mode:** 🟢 Current Speech")
+    if os.path.exists(selected_file):
+        mtime = datetime.fromtimestamp(os.path.getmtime(selected_file)).strftime("%Y-%m-%d %H:%M:%S")
+        st.sidebar.caption(f"🕒 Last evaluated: {mtime}")
     else:
-        st.sidebar.info("No speech reports found yet.")
+        st.sidebar.caption("🕒 Ready for speech (toggle switch ON)")
 
-    if st.sidebar.button("🔄 Manual Refresh", use_container_width=True):
+    if st.sidebar.button("🔄 Refresh Evaluation", use_container_width=True):
         st.rerun()
 
 st.sidebar.markdown("---")
@@ -762,13 +765,15 @@ elif current_view == "📊 My Speech History":
                 c3.write(f"🗣️ **Fillers:** {sp['total_fillers']} (Pauses: {sp['vocalized_pauses']}, Crutches: {sp['verbal_crutches']})")
                 c4.write(f"📖 **Grammar Errors:** {sp['grammar_errors']}")
 
-                rep_path = sp.get("report_file", "")
-                if rep_path and os.path.exists(rep_path):
-                    sp_rep = load_report_file(rep_path)
-                    if sp_rep:
-                        t_text = sp_rep.get("transcript_summary", {}).get("full_transcript", "")
-                        if t_text:
-                            st.markdown(f"**Transcript:**\n> {t_text}")
+                t_text = sp.get("transcript", "")
+                if not t_text:
+                    rep_path = sp.get("report_file", "")
+                    if rep_path and os.path.exists(rep_path):
+                        sp_rep = load_report_file(rep_path)
+                        if sp_rep:
+                            t_text = sp_rep.get("transcript_summary", {}).get("full_transcript", "")
+                if t_text:
+                    st.markdown(f"**Transcript:**\n> {t_text}")
     else:
         st.info("No recorded speeches found yet under your account. Step up to the podium and flip the switch to record your first speech!")
 
@@ -849,6 +854,36 @@ elif current_view == "📋 All Speech Records":
         )
     else:
         st.info("No speech sessions recorded yet in database.")
+
+    # History Management Section
+    st.markdown("---")
+    st.subheader("⚙️ History Management")
+    with st.expander("🗑️ Clear / Reset All Speech Records & Reports", expanded=False):
+        st.warning(
+            "⚠️ **Danger Zone:** This will permanently delete all past speech sessions, "
+            "archived report JSON files, and database records. "
+            "Registered student user accounts and passwords will remain safe."
+        )
+        confirm_clear = st.checkbox("I confirm I want to permanently delete all speech history.")
+        if st.button("🗑️ Delete All Speech History Now", type="primary", disabled=not confirm_clear, use_container_width=True):
+            deleted_db = db.clear_all_speeches()
+            purged_files = 0
+            for rf in glob.glob("reports/speech_report_*.json") + glob.glob("reports/evaluation_report.json"):
+                try:
+                    if os.path.exists(rf):
+                        os.remove(rf)
+                        purged_files += 1
+                except Exception:
+                    pass
+            if os.path.exists("evaluation_report.json"):
+                try:
+                    os.remove("evaluation_report.json")
+                    purged_files += 1
+                except Exception:
+                    pass
+            st.success(f"Cleaned {deleted_db} database record(s) and purged {purged_files} report file(s)!")
+            time.sleep(1.0)
+            st.rerun()
 
 
 # ------------------------------------------------------------------------------

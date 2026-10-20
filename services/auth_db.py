@@ -75,10 +75,17 @@ class AuthDB:
                     verbal_crutches INTEGER NOT NULL,
                     grammar_errors INTEGER NOT NULL,
                     report_file TEXT NOT NULL,
+                    transcript TEXT NOT NULL DEFAULT '',
                     created_at TEXT NOT NULL
                 )
                 """
             )
+
+            # Column migration if table already exists
+            try:
+                cursor.execute("ALTER TABLE speech_sessions ADD COLUMN transcript TEXT NOT NULL DEFAULT ''")
+            except sqlite3.OperationalError:
+                pass
 
             # 3. Active Speaker State Table (single row)
             cursor.execute(
@@ -278,7 +285,8 @@ class AuthDB:
             full_name = active["full_name"]
 
         timing = report_data.get("timing", {})
-        transcript = report_data.get("transcript_summary", {})
+        transcript_info = report_data.get("transcript_summary", {})
+        full_transcript = transcript_info.get("full_transcript", "")
         ah = report_data.get("ah_counter", {})
         gram = report_data.get("grammarian", {})
 
@@ -286,9 +294,9 @@ class AuthDB:
         grade = str(report_data.get("overall_grade", "N/A"))
         duration = float(timing.get("duration_seconds", 0.0))
         fmt_dur = str(timing.get("formatted_duration", "00:00"))
-        words = int(transcript.get("total_words", 0))
-        wpm = float(transcript.get("words_per_minute", 0.0))
-        pacing = str(transcript.get("pacing_rating", "Optimal"))
+        words = int(transcript_info.get("total_words", 0))
+        wpm = float(transcript_info.get("words_per_minute", 0.0))
+        pacing = str(transcript_info.get("pacing_rating", "Optimal"))
         fillers = int(ah.get("total_fillers", 0))
         pauses = int(ah.get("vocalized_pauses_count", 0))
         crutches = int(ah.get("verbal_crutches_count", 0))
@@ -304,9 +312,9 @@ class AuthDB:
                         session_id, username, full_name, overall_score, overall_grade,
                         duration_seconds, formatted_duration, total_words, wpm, pacing_rating,
                         total_fillers, vocalized_pauses, verbal_crutches, grammar_errors,
-                        report_file, created_at
+                        report_file, transcript, created_at
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(session_id) DO UPDATE SET
                         username=excluded.username,
                         full_name=excluded.full_name,
@@ -314,19 +322,38 @@ class AuthDB:
                         overall_grade=excluded.overall_grade,
                         total_fillers=excluded.total_fillers,
                         grammar_errors=excluded.grammar_errors,
-                        report_file=excluded.report_file
+                        report_file=excluded.report_file,
+                        transcript=excluded.transcript
                     """,
                     (
                         session_id, username, full_name, score, grade,
                         duration, fmt_dur, words, wpm, pacing,
                         fillers, pauses, crutches, errors,
-                        report_file, created,
+                        report_file, full_transcript, created,
                     ),
                 )
                 conn.commit()
                 logger.info(f"[AuthDB] Linked speech [{session_id}] to student '{username}' ({score} pts)")
         except Exception as e:
             logger.error(f"[AuthDB] Error saving speech session: {e}")
+
+    def clear_all_speeches(self) -> int:
+        """
+        Clear all recorded speech sessions from the database.
+        User accounts and credentials remain untouched.
+        Returns the number of deleted records.
+        """
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("DELETE FROM speech_sessions")
+                deleted = cursor.rowcount
+                conn.commit()
+                logger.info(f"[AuthDB] Cleared all speech records ({deleted} sessions removed).")
+                return deleted
+        except Exception as e:
+            logger.error(f"[AuthDB] Error clearing speech records: {e}")
+            return 0
 
     def get_speeches_for_student(self, username: str) -> List[Dict[str, Any]]:
         """Get all speech records for a specific student, most recent first."""

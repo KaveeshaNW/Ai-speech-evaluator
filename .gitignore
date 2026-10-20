@@ -9,6 +9,9 @@ __pycache__/
 env/
 speech_env/
 logs/
+reports/
+evaluation_report.json
+*.db
 *.docx
 *.doc
 ~$*

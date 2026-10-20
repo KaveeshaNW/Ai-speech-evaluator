@@ -322,7 +322,10 @@ class TestReportGenerator(unittest.TestCase):
 
     def setUp(self):
         self.temp_dir = tempfile.mkdtemp()
-        self.generator = ReportGenerator(output_dir=self.temp_dir)
+        self.generator = ReportGenerator(
+            output_dir=self.temp_dir,
+            latest_filepath=os.path.join(self.temp_dir, "evaluation_report.json"),
+        )
 
     def tearDown(self):
         shutil.rmtree(self.temp_dir)
