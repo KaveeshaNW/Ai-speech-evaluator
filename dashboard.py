@@ -441,6 +441,44 @@ def build_highlighted_transcript(full_transcript: str, issues: List[Dict[str, An
     return "".join(result)
 
 
+def render_speech_details(sp: Dict[str, Any]) -> None:
+    """Render full metrics, disfluencies, and transcript with Grammarly cards for a past speech record."""
+    c1, c2, c3, c4 = st.columns(4)
+    c1.write(f"⏱️ **Duration:** {sp.get('formatted_duration', '00:00')}")
+    c2.write(f"🏃 **Pacing:** {sp.get('wpm', 0.0):.0f} WPM ({sp.get('pacing_rating', 'Normal')})")
+    c3.write(f"🗣️ **Fillers:** {sp.get('total_fillers', 0)} (Pauses: {sp.get('vocalized_pauses', 0)}, Crutches: {sp.get('verbal_crutches', 0)})")
+    c4.write(f"📖 **Grammar Errors:** {sp.get('grammar_errors', 0)}")
+
+    archive_file = os.path.join("reports", f"speech_report_{sp['session_id']}.json")
+    if not os.path.exists(archive_file) and sp.get("report_file"):
+        archive_file = sp["report_file"]
+
+    past_rep = load_report_file(archive_file) if os.path.exists(archive_file) else None
+
+    t_text = sp.get("transcript", "")
+    past_issues = []
+    if past_rep:
+        t_text = past_rep.get("transcript_summary", {}).get("full_transcript", t_text)
+        past_issues = past_rep.get("grammarian", {}).get("issues", [])
+        past_ah = past_rep.get("ah_counter", {})
+        freq = past_ah.get("frequency_breakdown", {})
+        if freq:
+            top_f = ", ".join([f"`{k}` ({v}x)" for k, v in freq.items()])
+            st.markdown(f"**Top Disfluencies:** {top_f}")
+
+    if t_text:
+        if past_issues:
+            st.markdown("**Transcript & Grammar Review (Hover over red highlights for insights):**")
+            st.markdown(
+                f"<div class='transcript-box'>{build_highlighted_transcript(t_text, past_issues)}</div>",
+                unsafe_allow_html=True,
+            )
+        else:
+            st.markdown(f"**Transcript:**\n> {t_text}")
+    else:
+        st.caption("No transcript recorded for this session.")
+
+
 # ------------------------------------------------------------------------------
 # 5. Authenticated Sidebar Branding & Navigation
 # ------------------------------------------------------------------------------
@@ -523,6 +561,13 @@ st.sidebar.markdown(
 if current_view == "🎙️ Live Speech Evaluation":
     st.markdown('<div class="main-header">🎙️ Toastmasters AI Speech Evaluator</div>', unsafe_allow_html=True)
     st.markdown('<div class="sub-header">Automated Timer, Ah-Counter, and Grammarian Dashboard</div>', unsafe_allow_html=True)
+
+    # Navigation guidance notice
+    hist_dest = "📊 My Speech History" if st.session_state["user_role"] != "admin" else "📋 All Speech Records"
+    st.caption(
+        f"💡 **Looking for past speech reports?** This screen strictly tracks the current live speech. "
+        f"Switch to **'{hist_dest}'** in the navigation menu (open sidebar with `>` on mobile) to view and inspect previous evaluations."
+    )
 
     # --------------------------------------------------------------------------
     # Active Speaker indicator & Admin Podium Assignment
@@ -895,26 +940,33 @@ elif current_view == "📊 My Speech History":
     st.markdown("---")
     st.subheader("📜 Past Speech Evaluations")
 
-    if speeches:
-        for idx, sp in enumerate(speeches):
-            with st.expander(f"Speech #{len(speeches)-idx}: {sp['created_at']} — Score: {sp['overall_score']} pts ({sp['overall_grade']})"):
-                c1, c2, c3, c4 = st.columns(4)
-                c1.write(f"⏱️ **Duration:** {sp['formatted_duration']}")
-                c2.write(f"🏃 **Pacing:** {sp['wpm']:.0f} WPM ({sp['pacing_rating']})")
-                c3.write(f"🗣️ **Fillers:** {sp['total_fillers']} (Pauses: {sp['vocalized_pauses']}, Crutches: {sp['verbal_crutches']})")
-                c4.write(f"📖 **Grammar Errors:** {sp['grammar_errors']}")
+    tab_my, tab_all = st.tabs(["👤 My Personal Speeches", "🌐 All Meeting Speeches (Including Guests)"])
 
-                t_text = sp.get("transcript", "")
-                if not t_text:
-                    rep_path = sp.get("report_file", "")
-                    if rep_path and os.path.exists(rep_path):
-                        sp_rep = load_report_file(rep_path)
-                        if sp_rep:
-                            t_text = sp_rep.get("transcript_summary", {}).get("full_transcript", "")
-                if t_text:
-                    st.markdown(f"**Transcript:**\n> {t_text}")
-    else:
-        st.info("No recorded speeches found yet under your account. Step up to the podium and flip the switch to record your first speech!")
+    with tab_my:
+        st.markdown(f"#### Personal Speech Log (`@{st.session_state['username']}`)")
+        if speeches:
+            for idx, sp in enumerate(speeches):
+                with st.expander(f"Speech #{len(speeches)-idx}: {sp['created_at']} — Score: {sp['overall_score']} pts ({sp['overall_grade']})"):
+                    render_speech_details(sp)
+        else:
+            st.info(
+                f"No recorded speeches found under `@{st.session_state['username']}` yet. "
+                "If you delivered a speech while the podium was set to 'Guest Speaker' (or before logging in), "
+                "switch to the **'🌐 All Meeting Speeches'** tab above to view and inspect it!"
+            )
+
+    with tab_all:
+        st.markdown("#### All Speech Sessions (Club Audit Trail)")
+        all_club = db.get_all_speech_sessions()
+        if all_club:
+            st.caption(f"Displaying all {len(all_club)} speech session(s) recorded in the evaluator:")
+            for idx, sp in enumerate(all_club):
+                with st.expander(
+                    f"[{sp['session_id']}] {sp['full_name']} (@{sp['username']}) — {sp['created_at']} — Score: {sp['overall_score']} pts ({sp['overall_grade']})"
+                ):
+                    render_speech_details(sp)
+        else:
+            st.info("No speech sessions recorded yet in the system.")
 
 
 # ==============================================================================
@@ -1016,6 +1068,20 @@ elif current_view == "📋 All Speech Records":
             ],
             use_container_width=True,
         )
+
+        st.markdown("---")
+        st.subheader("🔍 Inspect Detailed Speech Report")
+        session_opts = [
+            f"{s['session_id']} — {s['full_name']} ({s['created_at']}, {s['overall_score']:.0f} pts)"
+            for s in all_sessions
+        ]
+        chosen_opt = st.selectbox("Select Past Speech to Inspect:", session_opts)
+        chosen_sid = chosen_opt.split(" — ")[0].strip()
+        chosen_sp = next((s for s in all_sessions if s["session_id"] == chosen_sid), None)
+
+        if chosen_sp:
+            st.markdown(f"##### Speech Session: `{chosen_sp['session_id']}` · Speaker: **{chosen_sp['full_name']}** (`@{chosen_sp['username']}`)")
+            render_speech_details(chosen_sp)
     else:
         st.info("No speech sessions recorded yet in database.")
 

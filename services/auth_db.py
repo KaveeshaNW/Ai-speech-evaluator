@@ -8,7 +8,9 @@ Provides local SQLite storage for:
 Zero external pip dependencies (uses Python built-in sqlite3 and hashlib).
 """
 
+import glob
 import hashlib
+import json
 import logging
 import os
 import secrets
@@ -28,6 +30,10 @@ class AuthDB:
     def __init__(self, db_path: str = DEFAULT_DB_PATH):
         self.db_path = db_path
         self._init_db()
+        try:
+            self.sync_archived_reports()
+        except Exception as e:
+            logger.debug(f"[AuthDB] Initial sync error: {e}")
 
     def _get_connection(self) -> sqlite3.Connection:
         """Create a connection with row factory for dictionary-like access."""
@@ -276,13 +282,21 @@ class AuthDB:
         If no user specified, links to the currently active speaker.
         """
         session_id = report_data.get("session_id", "session")
+        if "evaluation_report.json" in report_file or not report_file:
+            report_file = os.path.join("reports", f"speech_report_{session_id}.json")
+
         if override_username and override_name:
             username = override_username.strip().lower()
             full_name = override_name.strip()
         else:
-            active = self.get_active_speaker()
-            username = active["username"]
-            full_name = active["full_name"]
+            rep_spk = report_data.get("speaker", {})
+            if rep_spk and rep_spk.get("username"):
+                username = rep_spk["username"].strip().lower()
+                full_name = rep_spk.get("full_name", username).strip()
+            else:
+                active = self.get_active_speaker()
+                username = active["username"]
+                full_name = active["full_name"]
 
         timing = report_data.get("timing", {})
         transcript_info = report_data.get("transcript_summary", {})
@@ -336,6 +350,64 @@ class AuthDB:
                 logger.info(f"[AuthDB] Linked speech [{session_id}] to student '{username}' ({score} pts)")
         except Exception as e:
             logger.error(f"[AuthDB] Error saving speech session: {e}")
+
+    def sync_archived_reports(self, reports_dir: Optional[str] = None) -> int:
+        """
+        Scan reports_dir for existing JSON speech reports (speech_report_*.json)
+        and ensure they are recorded in the database.
+        Also corrects any legacy records that had report_file set to 'evaluation_report.json'.
+        """
+        if reports_dir is None:
+            reports_dir = os.path.join(os.path.dirname(self.db_path), "reports")
+
+        if not os.path.exists(reports_dir):
+            return 0
+
+        synced = 0
+        try:
+            pattern = os.path.join(reports_dir, "speech_report_*.json")
+            for rpath in glob.glob(pattern):
+                try:
+                    with open(rpath, "r", encoding="utf-8") as f:
+                        rdata = json.load(f)
+
+                    sid = rdata.get("session_id")
+                    if not sid:
+                        continue
+
+                    rel_rpath = os.path.join("reports", os.path.basename(rpath))
+
+                    with self._get_connection() as conn:
+                        cur = conn.cursor()
+                        cur.execute(
+                            "SELECT session_id, report_file FROM speech_sessions WHERE session_id = ?",
+                            (sid,),
+                        )
+                        row = cur.fetchone()
+
+                        if row is None:
+                            spk = rdata.get("speaker", {})
+                            u = spk.get("username", "guest")
+                            fn = spk.get("full_name", "Guest Speaker")
+                            self.record_speech_session(
+                                report_data=rdata,
+                                report_file=rel_rpath,
+                                override_username=u,
+                                override_name=fn,
+                            )
+                            synced += 1
+                        elif row["report_file"] == "evaluation_report.json" or row["report_file"] != rel_rpath:
+                            cur.execute(
+                                "UPDATE speech_sessions SET report_file = ? WHERE session_id = ?",
+                                (rel_rpath, sid),
+                            )
+                            conn.commit()
+                except Exception as file_err:
+                    logger.debug(f"[AuthDB] Skipped syncing report {rpath}: {file_err}")
+        except Exception as e:
+            logger.error(f"[AuthDB] Error during archived report sync: {e}")
+
+        return synced
 
     def clear_all_speeches(self) -> int:
         """

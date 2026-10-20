@@ -73,6 +73,7 @@ class ReportGenerator:
         full_transcript: str,
         ah_counter: AhCounter,
         grammarian: GrammarianEngine,
+        speaker: Optional[Dict[str, str]] = None,
     ) -> Tuple[str, Dict[str, Any]]:
         """
         Build and write the JSON evaluation report.
@@ -143,6 +144,7 @@ class ReportGenerator:
         report_data: Dict[str, Any] = {
             "session_id": session_id,
             "generated_at": datetime.now().isoformat(),
+            "speaker": speaker or {"username": "guest", "full_name": "Guest Speaker"},
             "overall_score": overall_score,
             "overall_grade": grade,
             "timing": {

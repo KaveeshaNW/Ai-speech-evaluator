@@ -237,6 +237,18 @@ class MainSpeechEvaluator:
 
         # 5. Compile full transcript and write evaluation_report.json
         full_transcript = self.stt_stream.get_full_transcript()
+
+        # Look up assigned podium speaker
+        speaker_info = {"username": "guest", "full_name": "Guest Speaker"}
+        try:
+            from services.auth_db import AuthDB
+            _adb = AuthDB()
+            active_spk = _adb.get_active_speaker()
+            if active_spk and active_spk.get("username"):
+                speaker_info = active_spk
+        except Exception as _e:
+            logger.debug(f"[Main] Could not lookup active speaker: {_e}")
+
         report_path, report_data = self.report_generator.generate(
             session_id=session_id,
             start_time=start_t,
@@ -244,7 +256,24 @@ class MainSpeechEvaluator:
             full_transcript=full_transcript,
             ah_counter=self.ah_counter,
             grammarian=self.grammarian,
+            speaker=speaker_info,
         )
+
+        # 5b. Record session to SQLite database immediately
+        try:
+            from services.auth_db import AuthDB
+            auth_db = AuthDB()
+            auth_db.record_speech_session(
+                report_data=report_data,
+                report_file=report_path,
+                override_username=speaker_info.get("username"),
+                override_name=speaker_info.get("full_name"),
+            )
+            logger.info(
+                f"[Main] Saved speech session [{session_id}] for {speaker_info.get('full_name')} (@{speaker_info.get('username')}) to database."
+            )
+        except Exception as e:
+            logger.error(f"[Main] Failed to save speech session to database: {e}")
 
         total_ah = self.ah_counter.get_total_count()
         total_err = self.grammarian.get_error_count()
