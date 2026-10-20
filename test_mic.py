@@ -18,7 +18,7 @@ import wave
 import io
 import requests
 
-from config import get_config
+from config import load_config
 from services.grammarian import GrammarianEngine
 
 def run_unmute():
@@ -39,7 +39,7 @@ def main():
 
     run_unmute()
 
-    cfg = get_config()
+    cfg = load_config()
     print(f"[*] Deepgram Configured: {'YES' if cfg.is_deepgram_configured() else 'NO (Check .env)'}")
 
     try:
