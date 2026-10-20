@@ -227,8 +227,6 @@ if "username" not in st.session_state:
 if "full_name" not in st.session_state:
     st.session_state["full_name"] = "Guest Speaker"
 
-logo_path = os.path.join(os.path.dirname(__file__), "assets", "toastmasters_logo.svg")
-
 # ------------------------------------------------------------------------------
 # 3. WEBSITE AUTHENTICATION GATE (Visible when not logged in)
 # ------------------------------------------------------------------------------
@@ -250,12 +248,7 @@ if not st.session_state["logged_in"]:
 
     with c_center:
         st.markdown("<div style='height: 1.5rem;'></div>", unsafe_allow_html=True)
-        if os.path.exists(logo_path):
-            st.image(logo_path, use_container_width=True)
-        else:
-            st.markdown("## 🎙️ TOASTMASTERS INTERNATIONAL")
-
-        st.markdown('<div class="portal-title">AI Speech Evaluator Portal</div>', unsafe_allow_html=True)
+        st.markdown('<div class="portal-title">🎙️ AI Speech Evaluator Portal</div>', unsafe_allow_html=True)
         st.markdown('<div class="portal-subtitle">Sign in to access your speech analytics and podium evaluations</div>', unsafe_allow_html=True)
 
         tab_login, tab_signup, tab_admin = st.tabs(["🔑 Student Sign In", "📝 Create Account", "🛡️ Admin Access"])
@@ -370,12 +363,7 @@ def get_available_reports() -> List[str]:
 # ------------------------------------------------------------------------------
 # 5. Authenticated Sidebar Branding & Navigation
 # ------------------------------------------------------------------------------
-if os.path.exists(logo_path):
-    st.sidebar.image(logo_path, use_container_width=True)
-else:
-    st.sidebar.markdown("### 🎙️ TOASTMASTERS")
-
-st.sidebar.title("Speech Evaluator")
+st.sidebar.title("🎙️ Speech Evaluator")
 st.sidebar.markdown("**Host:** Raspberry Pi 3")
 
 # User Badge & Logout in Sidebar
