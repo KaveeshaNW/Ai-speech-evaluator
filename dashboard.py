@@ -267,7 +267,6 @@ if not st.session_state["logged_in"]:
                         st.session_state["user_role"] = "student"
                         st.session_state["username"] = user["username"]
                         st.session_state["full_name"] = user["full_name"]
-                        db.set_active_speaker(user["username"], user["full_name"])
                         st.success(f"Welcome back, {user['full_name']}!")
                         time.sleep(0.4)
                         st.rerun()
@@ -289,7 +288,6 @@ if not st.session_state["logged_in"]:
                         st.session_state["user_role"] = "student"
                         st.session_state["username"] = su_username.strip().lower()
                         st.session_state["full_name"] = su_fullname.strip()
-                        db.set_active_speaker(su_username.strip().lower(), su_fullname.strip())
                         st.success(f"Welcome to Toastmasters, {su_fullname}!")
                         time.sleep(0.5)
                         st.rerun()
@@ -452,52 +450,87 @@ if current_view == "🎙️ Live Speech Evaluation":
     st.markdown('<div class="main-header">🎙️ Toastmasters AI Speech Evaluator</div>', unsafe_allow_html=True)
     st.markdown('<div class="sub-header">Automated Timer, Ah-Counter, and Grammarian Dashboard</div>', unsafe_allow_html=True)
 
-    # Active Speaker indicator at podium
+    # --------------------------------------------------------------------------
+    # Active Speaker indicator & Admin Podium Assignment
+    # --------------------------------------------------------------------------
     active_speaker = db.get_active_speaker()
-    col_a, col_b = st.columns([2, 1])
-    with col_a:
-        st.info(f"🎤 **Current Speaker at Podium:** {active_speaker['full_name']} (`@{active_speaker['username']}`)")
-    with col_b:
-        if st.session_state["user_role"] == "admin":
-            all_students = db.get_all_students()
-            options = ["Guest Speaker"] + [f"{s['full_name']} ({s['username']})" for s in all_students]
-            selected_speaker = st.selectbox("Assign Active Speaker:", options, index=0)
-            if st.button("Set Active Speaker", use_container_width=True):
-                if selected_speaker == "Guest Speaker":
-                    db.set_active_speaker("guest", "Guest Speaker")
+
+    if st.session_state["user_role"] == "admin":
+        with st.expander(f"🎤 Podium Speaker Assignment · Current: **{active_speaker['full_name']}**", expanded=True):
+            col_adm1, col_adm2 = st.columns([2, 1])
+            with col_adm1:
+                all_students = db.get_all_students()
+                options = ["Guest Speaker", "Custom Guest Speaker..."] + [
+                    f"{s['full_name']} (@{s['username']})" for s in all_students
+                ]
+
+                # Determine active index
+                if active_speaker["username"] == "guest":
+                    if active_speaker["full_name"] == "Guest Speaker":
+                        curr_idx = 0
+                    else:
+                        curr_idx = 1
                 else:
-                    uname = selected_speaker.split("(")[-1].replace(")", "").strip()
-                    s_name = selected_speaker.split("(")[0].strip()
-                    db.set_active_speaker(uname, s_name)
-                st.rerun()
+                    target_str = f"{active_speaker['full_name']} (@{active_speaker['username']})"
+                    curr_idx = options.index(target_str) if target_str in options else 0
+
+                sel_speaker = st.selectbox(
+                    "Select Active Speaker at Podium (Admin Decides):",
+                    options,
+                    index=curr_idx,
+                    help="Only the Admin can assign who is delivering a speech at the physical podium.",
+                )
+
+                custom_guest_name = ""
+                if sel_speaker == "Custom Guest Speaker...":
+                    prev_name = active_speaker["full_name"] if active_speaker["username"] == "guest" else "Guest Speaker"
+                    custom_guest_name = st.text_input("Guest Speaker Full Name:", value=prev_name)
+
+            with col_adm2:
+                st.markdown("<div style='height: 1.85rem;'></div>", unsafe_allow_html=True)
+                if st.button("🎤 Assign to Podium", type="primary", use_container_width=True):
+                    if sel_speaker == "Guest Speaker":
+                        db.set_active_speaker("guest", "Guest Speaker")
+                        st.success("Podium assigned to: Guest Speaker")
+                    elif sel_speaker == "Custom Guest Speaker...":
+                        g_clean = custom_guest_name.strip() or "Guest Speaker"
+                        db.set_active_speaker("guest", g_clean)
+                        st.success(f"Podium assigned to: {g_clean}")
+                    else:
+                        s_uname = sel_speaker.split("(@")[-1].replace(")", "").strip()
+                        s_fname = sel_speaker.split(" (@")[0].strip()
+                        db.set_active_speaker(s_uname, s_fname)
+                        st.success(f"Podium assigned to: {s_fname}")
+                    time.sleep(0.3)
+                    st.rerun()
+    else:
+        # Students / Viewers see the podium speaker assigned by the Admin
+        st.info(
+            f"🎤 **Active Speaker at Podium:** **{active_speaker['full_name']}** "
+            f"(`@{active_speaker['username']}`) · *Assigned by Admin*"
+        )
 
     report = load_report_file(selected_file) if selected_file and os.path.exists(selected_file) else None
 
     if not report:
         st.warning("⏳ **Awaiting Speech Capture...**")
         st.info(
-            """
+            f"""
             The physical toggle switch is currently **OFF** (or no evaluation report has been finalized yet).
+            
+            **Current Speaker at Podium:** **{active_speaker['full_name']}**
             
             **How to start:**
             1. Flip the physical toggle switch connected to **GPIO 18 ON**.
             2. Speak into the **M-305 microphone**. The physical 16x2 LCD will display the live timer (`Time: MM:SS`).
-            3. Flip the switch **OFF** when you finish. The evaluation will process and instantly appear on this dashboard!
+            3. Flip the switch **OFF** when you finish. The evaluation will process and automatically link to **{active_speaker['full_name']}**!
             """
         )
         st.stop()
 
-    # Link report to database for student history
+    # Link report to database: ALWAYS attributes to the active speaker assigned by Admin!
     if selected_file == "evaluation_report.json" or "reports" in selected_file:
-        if st.session_state["user_role"] == "student":
-            db.record_speech_session(
-                report,
-                selected_file,
-                override_username=st.session_state["username"],
-                override_name=st.session_state["full_name"],
-            )
-        else:
-            db.record_speech_session(report, selected_file)
+        db.record_speech_session(report, selected_file)
 
     # Extract Data
     session_id = report.get("session_id", "N/A")
@@ -806,6 +839,22 @@ elif current_view == "👥 Student Directory & Analytics":
             ],
             use_container_width=True,
         )
+
+        st.markdown("---")
+        st.subheader("🎤 Quick Podium Assignment")
+        q_options = ["Guest Speaker"] + [f"{s['full_name']} (@{s['username']})" for s in all_students]
+        q_sel = st.selectbox("Assign Student or Guest to Podium:", q_options, key="q_podium")
+        if st.button("Set as Active Podium Speaker", key="btn_q_podium"):
+            if q_sel == "Guest Speaker":
+                db.set_active_speaker("guest", "Guest Speaker")
+                st.success("Assigned Guest Speaker to podium!")
+            else:
+                s_u = q_sel.split("(@")[-1].replace(")", "").strip()
+                s_f = q_sel.split(" (@")[0].strip()
+                db.set_active_speaker(s_u, s_f)
+                st.success(f"Assigned {s_f} to podium!")
+            time.sleep(0.3)
+            st.rerun()
     else:
         st.info("No students registered yet. Students can register anytime using the registration form.")
 
