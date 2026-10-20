@@ -92,11 +92,12 @@ st.markdown(
         color: inherit;
         border: 1px solid rgba(128, 128, 128, 0.25);
         border-radius: 8px;
-        padding: 1.3rem;
-        font-size: 1.08rem;
-        line-height: 2.0;
+        padding: 1.5rem;
+        font-size: 1.12rem;
+        line-height: 2.3;
         min-height: 180px;
         position: relative;
+        overflow: visible !important;
     }
     .grammar-highlight {
         position: relative;
@@ -104,33 +105,35 @@ st.markdown(
         background-color: rgba(220, 53, 69, 0.16);
         color: #e63946;
         border-bottom: 2.5px wavy #d90429;
-        padding: 1px 4px;
+        padding: 1px 5px;
         border-radius: 4px;
         font-weight: 600;
         cursor: pointer;
     }
+    .grammar-highlight:hover {
+        background-color: rgba(220, 53, 69, 0.28);
+    }
     .grammar-highlight:hover .grammar-tooltip {
-        opacity: 1;
-        visibility: visible;
-        transform: translateY(0);
+        display: block !important;
+        opacity: 1 !important;
+        visibility: visible !important;
+        transform: translateX(-50%) translateY(0) !important;
     }
     .grammar-tooltip {
+        display: none;
         position: absolute;
-        bottom: 125%;
+        bottom: calc(100% + 8px);
         left: 50%;
-        transform: translateY(6px);
+        transform: translateX(-50%) translateY(6px);
         width: 290px;
         background: #181c24;
         color: #f1f5f9;
         padding: 12px 14px;
-        border-radius: 9px;
-        font-size: 0.86rem;
+        border-radius: 8px;
+        font-size: 0.85rem;
         line-height: 1.45;
-        box-shadow: 0 12px 28px rgba(0, 0, 0, 0.65), 0 0 0 1px rgba(255, 255, 255, 0.12);
-        opacity: 0;
-        visibility: hidden;
-        transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
-        z-index: 9999;
+        box-shadow: 0 12px 28px rgba(0, 0, 0, 0.75), 0 0 0 1px rgba(255, 255, 255, 0.16);
+        z-index: 999999;
         pointer-events: none;
         text-align: left;
         white-space: normal;
@@ -346,6 +349,98 @@ def load_report_file(filepath: str) -> Optional[Dict[str, Any]]:
         return None
 
 
+def build_highlighted_transcript(full_transcript: str, issues: List[Dict[str, Any]]) -> str:
+    """
+    Produce HTML for the transcript where each grammatical error is underlined with
+    a red wavy line and features a Grammarly-style hover popover card explaining
+    the rule and suggesting corrections.
+    """
+    if not full_transcript:
+        return ""
+    if not issues:
+        return html.escape(full_transcript)
+
+    replacements = []
+    lower_transcript = full_transcript.lower()
+
+    for idx, issue in enumerate(issues):
+        context_text = issue.get("context_text", "")
+        c_off = int(issue.get("context_offset", 0))
+        c_len = int(issue.get("length", 0))
+        sentence = issue.get("sentence", "")
+        off = int(issue.get("offset", 0))
+
+        err_phrase = ""
+        # 1. Try extracting from context_text
+        if context_text and 0 <= c_off < len(context_text) and c_len > 0:
+            err_phrase = context_text[c_off : c_off + c_len].strip()
+        # 2. Try extracting from sentence
+        if not err_phrase and sentence and 0 <= off < len(sentence) and c_len > 0:
+            err_phrase = sentence[off : off + c_len].strip()
+
+        if not err_phrase:
+            continue
+
+        # Locate err_phrase in full_transcript
+        lower_err = err_phrase.lower()
+        pos = lower_transcript.find(lower_err)
+        if pos != -1:
+            end_pos = pos + len(err_phrase)
+            actual_err_word = full_transcript[pos:end_pos]
+            replacements.append((pos, end_pos, actual_err_word, issue, idx))
+
+    if not replacements:
+        return html.escape(full_transcript)
+
+    # Sort replacements in reverse order (right-to-left) to preserve character offsets
+    replacements.sort(key=lambda x: x[0], reverse=True)
+
+    # Filter out any overlapping slices
+    filtered = []
+    last_start = float("inf")
+    for start, end, actual_err_word, issue, idx in replacements:
+        if end <= last_start:
+            filtered.append((start, end, actual_err_word, issue, idx))
+            last_start = start
+
+    # Construct the HTML
+    result = []
+    cursor = len(full_transcript)
+    for start, end, actual_err_word, issue, idx in filtered:
+        # Text between this error and the next (or end)
+        result.append(html.escape(full_transcript[end:cursor]))
+
+        rule_id = html.escape(issue.get("rule_id", "Grammar Rule"))
+        msg = html.escape(issue.get("message", "Grammar rule opportunity."))
+        suggestions = issue.get("suggestions", [])
+
+        sug_html = ""
+        if suggestions:
+            pills = "".join(
+                [f"<span class='tooltip-suggestion'>{html.escape(s)}</span>" for s in suggestions[:3]]
+            )
+            sug_html = f"<div style='margin-top:6px;'><b>Suggested Fix:</b> {pills}</div>"
+
+        esc_word = html.escape(actual_err_word)
+        tooltip_card = (
+            f"<span class='grammar-highlight' title='{rule_id}: {msg}'>"
+            f"{esc_word}"
+            f"<span class='grammar-tooltip'>"
+            f"<span class='tooltip-badge'>Issue #{idx+1} · {rule_id}</span>"
+            f"<div class='tooltip-msg'>{msg}</div>"
+            f"{sug_html}"
+            f"</span>"
+            f"</span>"
+        )
+        result.append(tooltip_card)
+        cursor = start
+
+    # Add text before the first error
+    result.append(html.escape(full_transcript[:cursor]))
+    result.reverse()
+    return "".join(result)
+
+
 def get_available_reports() -> List[str]:
     """Find all evaluation reports in workspace and reports/ directory."""
     files = []
@@ -501,6 +596,15 @@ if current_view == "🎙️ Live Speech Evaluation":
                         s_fname = sel_speaker.split(" (@")[0].strip()
                         db.set_active_speaker(s_uname, s_fname)
                         st.success(f"Podium assigned to: {s_fname}")
+
+                    # Reset evaluation report so the new speaker starts with score 0
+                    for f in ["evaluation_report.json", os.path.join("reports", "evaluation_report.json")]:
+                        if os.path.exists(f):
+                            try:
+                                os.remove(f)
+                            except Exception:
+                                pass
+
                     time.sleep(0.3)
                     st.rerun()
     else:
@@ -513,35 +617,53 @@ if current_view == "🎙️ Live Speech Evaluation":
     report = load_report_file(selected_file) if selected_file and os.path.exists(selected_file) else None
 
     if not report:
-        st.warning("⏳ **Awaiting Speech Capture...**")
+        # Ready / Zero State (Awaiting speech capture for active speaker)
+        session_id = "Awaiting Delivery"
+        overall_score = 0.0
+        overall_grade = "Ready (Awaiting Delivery)"
+        timing = {"formatted_duration": "00:00", "timing_status": "Ready for Speech"}
+        transcript_summary = {"words_per_minute": 0.0, "pacing_rating": "Ready", "full_transcript": ""}
+        ah_counter = {
+            "total_fillers": 0,
+            "vocalized_pauses_count": 0,
+            "verbal_crutches_count": 0,
+            "fillers_per_minute": 0.0,
+            "frequency_breakdown": {},
+            "timeline_events": [],
+        }
+        grammarian = {
+            "total_errors": 0,
+            "error_density_per_100_words": 0.0,
+            "issues": [],
+        }
+        evaluation = {
+            "summary": [
+                f"Speaker '{active_speaker['full_name']}' is assigned to the podium.",
+                "Step up to the microphone, toggle the physical switch ON (GPIO 18) to begin, and toggle OFF when done.",
+                "Real-time duration is shown on the 16x2 LCD screen.",
+                "Evaluation score and breakdown will display automatically once speech is finished.",
+            ]
+        }
         st.info(
-            f"""
-            The physical toggle switch is currently **OFF** (or no evaluation report has been finalized yet).
-            
-            **Current Speaker at Podium:** **{active_speaker['full_name']}**
-            
-            **How to start:**
-            1. Flip the physical toggle switch connected to **GPIO 18 ON**.
-            2. Speak into the **M-305 microphone**. The physical 16x2 LCD will display the live timer (`Time: MM:SS`).
-            3. Flip the switch **OFF** when you finish. The evaluation will process and automatically link to **{active_speaker['full_name']}**!
-            """
+            f"🎙️ **Podium Ready for {active_speaker['full_name']}** · "
+            f"Flip the physical toggle switch **ON** to start your speech. "
+            f"Evaluation and score will populate automatically once the speech is finished!"
         )
-        st.stop()
+    else:
+        # Link report to database: ALWAYS attributes to the active speaker assigned by Admin!
+        if selected_file == "evaluation_report.json" or "reports" in selected_file:
+            db.record_speech_session(report, selected_file)
 
-    # Link report to database: ALWAYS attributes to the active speaker assigned by Admin!
-    if selected_file == "evaluation_report.json" or "reports" in selected_file:
-        db.record_speech_session(report, selected_file)
+        # Extract Data
+        session_id = report.get("session_id", "N/A")
+        timing = report.get("timing", {})
+        transcript_summary = report.get("transcript_summary", {})
+        ah_counter = report.get("ah_counter", {})
+        grammarian = report.get("grammarian", {})
+        evaluation = report.get("toastmasters_evaluation", {})
 
-    # Extract Data
-    session_id = report.get("session_id", "N/A")
-    timing = report.get("timing", {})
-    transcript_summary = report.get("transcript_summary", {})
-    ah_counter = report.get("ah_counter", {})
-    grammarian = report.get("grammarian", {})
-    evaluation = report.get("toastmasters_evaluation", {})
-
-    overall_score = report.get("overall_score", evaluation.get("overall_score", 85.0))
-    overall_grade = report.get("overall_grade", evaluation.get("overall_grade", "B (Proficient)"))
+        overall_score = report.get("overall_score", evaluation.get("overall_score", 0.0))
+        overall_grade = report.get("overall_grade", evaluation.get("overall_grade", "Awaiting Delivery"))
 
     # 1. Overall Speech Score & Summary Metrics
     score_col, summary_col = st.columns([1, 2])
@@ -675,58 +797,23 @@ if current_view == "🎙️ Live Speech Evaluation":
     issues = grammarian.get("issues", [])
 
     if not full_transcript:
-        st.warning(
-            "⚠️ **No words were detected in this audio recording.**\n\n"
-            "If you spoke into the microphone, check:\n"
-            "1. Is the physical switch on the M-305 microphone handle switched to **ON**?\n"
-            "2. Is the microphone cable plugged into the **MIC (pink)** input jack of the USB adapter?\n"
-            "3. Is the microphone unmuted in **alsamixer**? (Run `alsamixer`, press `F4` for Capture, press `Space` to unmute, and press `Up Arrow` to raise gain)."
-        )
+        if not report:
+            st.info(
+                f"🎙️ **Ready for {active_speaker['full_name']}.** "
+                f"Flip the physical toggle switch ON at the podium to start recording. "
+                f"The transcribed speech and grammar evaluations will appear here as soon as you finish!"
+            )
+        else:
+            st.warning(
+                "⚠️ **No words were detected in this audio recording.**\n\n"
+                "If you spoke into the microphone, check:\n"
+                "1. Is the physical switch on the M-305 microphone handle switched to **ON**?\n"
+                "2. Is the microphone cable plugged into the **MIC (pink)** input jack of the USB adapter?\n"
+                "3. Is the microphone unmuted in **alsamixer**? (Run `alsamixer`, press `F4` for Capture, press `Space` to unmute, and press `Up Arrow` to raise gain)."
+            )
     else:
         # Build Grammarly-style highlighted transcript with hover cards
-        highlighted_text = html.escape(full_transcript)
-        for idx, issue in enumerate(issues):
-            context_text = issue.get("context_text", "")
-            c_off = int(issue.get("context_offset", 0))
-            c_len = int(issue.get("length", 0))
-            rule_id = html.escape(issue.get("rule_id", "Grammar Opportunity"))
-            msg = html.escape(issue.get("message", "Grammar rule opportunity."))
-            suggestions = issue.get("suggestions", [])
-
-            sug_html = ""
-            if suggestions:
-                sug_pills = "".join([f"<span class='tooltip-suggestion'>{html.escape(s)}</span>" for s in suggestions[:2]])
-                sug_html = f"<div style='margin-top:6px;'><b>Suggested Fix:</b> {sug_pills}</div>"
-
-            esc_context = html.escape(context_text)
-            if esc_context and esc_context in highlighted_text:
-                if 0 <= c_off < len(context_text) and (c_off + c_len) <= len(context_text) and c_len > 0:
-                    raw_err_word = context_text[c_off : c_off + c_len]
-                    err_word = html.escape(raw_err_word)
-                    hover_span = (
-                        f"<span class='grammar-highlight'>{err_word}"
-                        f"<span class='grammar-tooltip'>"
-                        f"<span class='tooltip-badge'>Issue #{idx+1} · {rule_id}</span>"
-                        f"<div class='tooltip-msg'>{msg}</div>"
-                        f"{sug_html}"
-                        f"</span>"
-                        f"</span>"
-                    )
-                    prefix = html.escape(context_text[:c_off])
-                    suffix = html.escape(context_text[c_off + c_len :])
-                    highlighted_context = prefix + hover_span + suffix
-                    highlighted_text = highlighted_text.replace(esc_context, highlighted_context, 1)
-                else:
-                    hover_span = (
-                        f"<span class='grammar-highlight'>{esc_context}"
-                        f"<span class='grammar-tooltip'>"
-                        f"<span class='tooltip-badge'>Issue #{idx+1} · {rule_id}</span>"
-                        f"<div class='tooltip-msg'>{msg}</div>"
-                        f"{sug_html}"
-                        f"</span>"
-                        f"</span>"
-                    )
-                    highlighted_text = highlighted_text.replace(esc_context, hover_span, 1)
+        highlighted_html = build_highlighted_transcript(full_transcript, issues)
 
         t_col1, t_col2 = st.columns([3, 2])
 
@@ -735,7 +822,7 @@ if current_view == "🎙️ Live Speech Evaluation":
             st.markdown(
                 f"""
                 <div class="transcript-box">
-                    {highlighted_text}
+                    {highlighted_html}
                 </div>
                 """,
                 unsafe_allow_html=True,
@@ -853,6 +940,15 @@ elif current_view == "👥 Student Directory & Analytics":
                 s_f = q_sel.split(" (@")[0].strip()
                 db.set_active_speaker(s_u, s_f)
                 st.success(f"Assigned {s_f} to podium!")
+
+            # Reset evaluation report so the new speaker starts with score 0
+            for f in ["evaluation_report.json", os.path.join("reports", "evaluation_report.json")]:
+                if os.path.exists(f):
+                    try:
+                        os.remove(f)
+                    except Exception:
+                        pass
+
             time.sleep(0.3)
             st.rerun()
     else:

@@ -268,43 +268,64 @@ class GrammarianEngine:
         return all_issues
 
     @staticmethod
-    def is_spoken_grammar_issue(rule_id: str, issue_type: str, category_id: str, message: str) -> bool:
+    def is_spoken_grammar_issue(
+        rule_id: str,
+        issue_type: str,
+        category_id: str,
+        message: str,
+        suggestions: Optional[List[str]] = None,
+    ) -> bool:
         """
-        Filter out punctuation, capitalization, and typographical artifacts
-        so only genuine spoken grammar, syntax, and word choice issues are evaluated.
+        Filter out punctuation, spelling/typos, capitalization, and typographical artifacts
+        so only genuine spoken grammar, syntax, verb agreement, and word choice issues are evaluated.
         """
         rule_id_upper = (rule_id or "").upper()
         cat_upper = (category_id or "").upper()
         type_lower = (issue_type or "").lower()
+        msg_lower = (message or "").lower()
 
-        # Exclude typographical and whitespace issue types
+        # 1. Reject typographical, whitespace
         if type_lower in {"typographical", "whitespace"}:
             return False
 
-        # Exclude punctuation, typography, casing categories
+        # 2. Reject punctuation, typography, casing, and whitespace categories
         if cat_upper in {"TYPOGRAPHY", "PUNCTUATION", "CASING", "WHITESPACE"}:
             return False
 
-        # Exclude rule IDs that specifically relate to punctuation or capitalization
+        # 3. Reject pure spelling dictionary rules (e.g. proper nouns or STT spelling variants)
+        if "MORFOLOGIK" in rule_id_upper or "SPELLER" in rule_id_upper:
+            return False
+
+        # 4. Reject rule IDs related to punctuation, capitalization, or formatting
         punctuation_keywords = [
             "COMMA", "PUNCTUATION", "QUOTE", "HYPHEN", "DASH", "APOSTROPHE",
-            "PERIOD", "QUESTION_MARK", "EXCLAMATION", "UPPERCASE_SENTENCE_START",
-            "CAPITALIZATION", "WHITESPACE", "DOUBLE_PUNCTUATION", "SPACE_BEFORE",
-            "MISSING_COMMA", "EXTRA_COMMA", "CONSECUTIVE_SPACES", "EN_A_VS_AN_BEFORE_CAPITAL"
+            "PERIOD", "QUESTION_MARK", "EXCLAMATION", "UPPERCASE", "LOWERCASE",
+            "CAPITALIZATION", "WHITESPACE", "DOUBLE_PUNCTUATION", "SPACE",
+            "MISSING_COMMA", "EXTRA_COMMA", "CONSECUTIVE_SPACES",
+            "COLON", "SEMICOLON", "BRACKET", "PARENTHESIS", "ELLIPSIS",
+            "FRAGMENT", "END_OF_SENTENCE", "I_LOWERCASE"
         ]
         if any(kw in rule_id_upper for kw in punctuation_keywords):
             return False
 
-        # Exclude message hints solely about punctuation or capitalization
-        msg_lower = (message or "").lower()
+        # 5. Reject message hints specifically about punctuation or capitalization
         if (
             "missing comma" in msg_lower
             or "unpaired quote" in msg_lower
             or "capitalize" in msg_lower
             or "add a comma" in msg_lower
             or "don't put a space before" in msg_lower
+            or "sentence does not start with an uppercase" in msg_lower
+            or "uppercase letter" in msg_lower
+            or "lowercase letter" in msg_lower
         ):
             return False
+
+        # 6. Reject if all suggested replacements are purely punctuation marks
+        if suggestions:
+            clean_sugs = [s.strip() for s in suggestions if s.strip()]
+            if clean_sugs and all(all(ch in ".,?!;:—-\"'()[]{}" for ch in s) for s in clean_sugs):
+                return False
 
         return True
 
@@ -322,8 +343,12 @@ class GrammarianEngine:
             category_id = category.get("id", "GRAMMAR")
             message = match.get("message", "")
 
+            # Extract replacement suggestions (take up to top 3)
+            raw_replacements = match.get("replacements", [])
+            suggestions = [r.get("value", "") for r in raw_replacements[:3] if r.get("value")]
+
             # Filter out punctuation marks and typographical STT artifacts
-            if not self.is_spoken_grammar_issue(rule_id, issue_type, category_id, message):
+            if not self.is_spoken_grammar_issue(rule_id, issue_type, category_id, message, suggestions):
                 continue
 
             offset = int(match.get("offset", 0))
@@ -332,10 +357,6 @@ class GrammarianEngine:
             context = match.get("context", {})
             context_text = context.get("text", "")
             context_offset = int(context.get("offset", 0))
-
-            # Extract replacement suggestions (take up to top 3)
-            raw_replacements = match.get("replacements", [])
-            suggestions = [r.get("value", "") for r in raw_replacements[:3] if r.get("value")]
 
             issue = GrammarIssue(
                 sentence=original_text,
