@@ -9,4 +9,7 @@ __pycache__/
 env/
 speech_env/
 logs/
+*.docx
+*.doc
+~$*
 .DS_Store
