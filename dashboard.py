@@ -441,18 +441,6 @@ def build_highlighted_transcript(full_transcript: str, issues: List[Dict[str, An
     return "".join(result)
 
 
-def get_available_reports() -> List[str]:
-    """Find all evaluation reports in workspace and reports/ directory."""
-    files = []
-    if os.path.exists("evaluation_report.json"):
-        files.append("evaluation_report.json")
-    for f in glob.glob("reports/speech_report_*.json"):
-        if f not in files:
-            files.append(f)
-    files.sort(key=lambda x: os.path.getmtime(x) if os.path.exists(x) else 0, reverse=True)
-    return files
-
-
 # ------------------------------------------------------------------------------
 # 5. Authenticated Sidebar Branding & Navigation
 # ------------------------------------------------------------------------------
@@ -505,17 +493,8 @@ if current_view == "🎙️ Live Speech Evaluation":
 # 7. Sidebar: Live Session Status (Directly uses current session, no JSON dropdown)
 # ------------------------------------------------------------------------------
 if current_view == "🎙️ Live Speech Evaluation":
-    # Always target current / latest evaluation report
+    # Strictly target the active live evaluation report (no fallback to archived history)
     selected_file = "evaluation_report.json"
-    if not os.path.exists(selected_file):
-        rep_alt = os.path.join("reports", "evaluation_report.json")
-        if os.path.exists(rep_alt):
-            selected_file = rep_alt
-        else:
-            archived = glob.glob("reports/speech_report_*.json")
-            if archived:
-                archived.sort(key=lambda x: os.path.getmtime(x) if os.path.exists(x) else 0, reverse=True)
-                selected_file = archived[0]
 
     st.sidebar.markdown("**Session Mode:** 🟢 Current Speech")
     if os.path.exists(selected_file):
@@ -615,6 +594,13 @@ if current_view == "🎙️ Live Speech Evaluation":
         )
 
     report = load_report_file(selected_file) if selected_file and os.path.exists(selected_file) else None
+
+    # Strict Speaker Attribution: If report on disk was generated BEFORE current speaker was assigned, ignore it!
+    if report:
+        rep_time = report.get("generated_at", "")
+        assigned_time = active_speaker.get("updated_at", "")
+        if assigned_time and rep_time and rep_time < assigned_time:
+            report = None
 
     if not report:
         # Ready / Zero State (Awaiting speech capture for active speaker)
