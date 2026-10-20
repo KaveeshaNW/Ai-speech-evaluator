@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 90" width="100%" height="100%">
+  <defs>
+    <linearGradient id="tmGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#772432" />
+      <stop offset="100%" stop-color="#004165" />
+    </linearGradient>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow dx="0" dy="2" stdDeviation="3" flood-opacity="0.3"/>
+    </filter>
+  </defs>
+
+  <!-- Badge Background -->
+  <rect x="2" y="2" width="316" height="86" rx="14" fill="url(#tmGradient)" filter="url(#shadow)" stroke="#f2df74" stroke-width="2"/>
+
+  <!-- Crest Circle -->
+  <g transform="translate(15, 12)">
+    <circle cx="33" cy="33" r="30" fill="#004165" stroke="#f2df74" stroke-width="2.5"/>
+    <circle cx="33" cy="33" r="26" fill="#772432"/>
+    
+    <!-- Globe lines -->
+    <ellipse cx="33" cy="33" rx="20" ry="10" fill="none" stroke="#f2df74" stroke-width="1.2" opacity="0.8"/>
+    <ellipse cx="33" cy="33" rx="10" ry="20" fill="none" stroke="#f2df74" stroke-width="1.2" opacity="0.8"/>
+    <line x1="13" y1="33" x2="53" y2="33" stroke="#f2df74" stroke-width="1.2"/>
+    <line x1="33" y1="13" x2="33" y2="53" stroke="#f2df74" stroke-width="1.2"/>
+    
+    <!-- Stylized TM Letters -->
+    <text x="33" y="38" font-family="'Segoe UI', Arial, sans-serif" font-weight="900" font-size="16" fill="#ffffff" text-anchor="middle" letter-spacing="1">T</text>
+  </g>
+
+  <!-- Brand Typography -->
+  <g transform="translate(90, 20)">
+    <text x="0" y="24" font-family="'Segoe UI', -apple-system, Roboto, sans-serif" font-weight="900" font-size="20" fill="#ffffff" letter-spacing="1.5">
+      TOASTMASTERS
+    </text>
+    <text x="1" y="44" font-family="'Segoe UI', -apple-system, Roboto, sans-serif" font-weight="700" font-size="11" fill="#f2df74" letter-spacing="3.5">
+      INTERNATIONAL
+    </text>
+  </g>
+</svg>

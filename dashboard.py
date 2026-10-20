@@ -1,14 +1,19 @@
 """
 Streamlit Web Dashboard for AI Speech Evaluator (Toastmasters Assistant).
 Runs on 0.0.0.0:8501 for local network accessibility from phones, tablets, or laptops.
-Displays:
-1. Overall Speech Score & Summary Metrics (WPM, Pacing, Duration, Toastmasters evaluation).
-2. Disfluency Breakdown (Total count, category breakdown, frequency distribution, exact timeline).
-3. Grammarian Report (Full transcript with highlighted errors and suggested corrections).
-Features automatic background refresh when new evaluation reports are generated.
+
+Features:
+1. Student Sign-Up & Login: Tracks individual student speech journeys.
+2. Admin Portal (Master Password): View all registered students, performance analytics, and manage active speaker.
+3. Live Evaluation Dashboard:
+   - Overall Speech Score & Summary Metrics (WPM, Pacing, Duration, Toastmasters evaluation).
+   - Disfluency Breakdown (Total count, category breakdown, frequency distribution, exact timeline).
+   - Grammarly-Style Interactive Transcript: Highlighted grammar errors with instant hover cards explaining rules and suggestions.
+4. Auto-refreshing background updates for live evaluation reports.
 """
 
 import glob
+import html
 import json
 import os
 import time
@@ -16,7 +21,11 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 import streamlit as st
 
-# Configure page layout and Toastmasters aesthetic
+from services.auth_db import AuthDB
+
+# ------------------------------------------------------------------------------
+# 1. Page Configuration & Custom CSS
+# ------------------------------------------------------------------------------
 st.set_page_config(
     page_title="AI Speech Evaluator | Toastmasters Dashboard",
     page_icon="🎙️",
@@ -24,7 +33,7 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# Custom CSS for Toastmasters styling, score badge, and error highlights
+# Custom CSS for Toastmasters styling, score badge, and Grammarly-style tooltips
 st.markdown(
     """
     <style>
@@ -58,22 +67,6 @@ st.markdown(
         font-weight: 600;
         opacity: 0.95;
     }
-    .grammar-error {
-        background-color: #ffd2d2;
-        color: #900;
-        padding: 2px 6px;
-        border-radius: 4px;
-        font-weight: 600;
-        border-bottom: 2px dashed #d00;
-        cursor: help;
-    }
-    .grammar-fix {
-        background-color: #d4edda;
-        color: #155724;
-        padding: 2px 6px;
-        border-radius: 4px;
-        font-weight: 600;
-    }
     .filler-badge-pause {
         background-color: #ffeeba;
         color: #856404;
@@ -90,12 +83,127 @@ st.markdown(
         font-size: 0.85rem;
         font-weight: 600;
     }
+
+    /* ------------------------------------------------------------- */
+    /* Grammarly-Style Interactive Hover Tooltip Cards                */
+    /* ------------------------------------------------------------- */
+    .transcript-box {
+        background-color: rgba(255, 255, 255, 0.05);
+        color: inherit;
+        border: 1px solid rgba(128, 128, 128, 0.25);
+        border-radius: 8px;
+        padding: 1.3rem;
+        font-size: 1.08rem;
+        line-height: 2.0;
+        min-height: 180px;
+        position: relative;
+    }
+    .grammar-highlight {
+        position: relative;
+        display: inline-block;
+        background-color: rgba(220, 53, 69, 0.16);
+        color: #e63946;
+        border-bottom: 2.5px wavy #d90429;
+        padding: 1px 4px;
+        border-radius: 4px;
+        font-weight: 600;
+        cursor: pointer;
+    }
+    .grammar-highlight:hover .grammar-tooltip {
+        opacity: 1;
+        visibility: visible;
+        transform: translateY(0);
+    }
+    .grammar-tooltip {
+        position: absolute;
+        bottom: 125%;
+        left: 50%;
+        transform: translateY(6px);
+        width: 290px;
+        background: #181c24;
+        color: #f1f5f9;
+        padding: 12px 14px;
+        border-radius: 9px;
+        font-size: 0.86rem;
+        line-height: 1.45;
+        box-shadow: 0 12px 28px rgba(0, 0, 0, 0.65), 0 0 0 1px rgba(255, 255, 255, 0.12);
+        opacity: 0;
+        visibility: hidden;
+        transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+        z-index: 9999;
+        pointer-events: none;
+        text-align: left;
+        white-space: normal;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    }
+    .grammar-tooltip::after {
+        content: '';
+        position: absolute;
+        top: 100%;
+        left: 50%;
+        margin-left: -6px;
+        border-width: 6px;
+        border-style: solid;
+        border-color: #181c24 transparent transparent transparent;
+    }
+    .tooltip-badge {
+        display: inline-block;
+        background: #772432;
+        color: #ffffff;
+        font-size: 0.7rem;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        padding: 2px 7px;
+        border-radius: 3px;
+        margin-bottom: 6px;
+    }
+    .tooltip-msg {
+        font-size: 0.85rem;
+        color: #e2e8f0;
+        margin-bottom: 6px;
+        font-weight: normal;
+    }
+    .tooltip-suggestion {
+        background: rgba(40, 167, 69, 0.22);
+        color: #4ade80;
+        border: 1px solid rgba(40, 167, 69, 0.45);
+        padding: 2px 8px;
+        border-radius: 4px;
+        font-weight: 600;
+        display: inline-block;
+        font-size: 0.82rem;
+        margin-right: 4px;
+    }
+    .grammar-fix {
+        background-color: #d4edda;
+        color: #155724;
+        padding: 2px 6px;
+        border-radius: 4px;
+        font-weight: 600;
+    }
     </style>
     """,
     unsafe_allow_html=True,
 )
 
+# ------------------------------------------------------------------------------
+# 2. Database & Session State Initialization
+# ------------------------------------------------------------------------------
+db = AuthDB()
 
+if "logged_in" not in st.session_state:
+    st.session_state["logged_in"] = False
+if "user_role" not in st.session_state:
+    st.session_state["user_role"] = "guest"  # guest, student, admin
+if "username" not in st.session_state:
+    st.session_state["username"] = "guest"
+if "full_name" not in st.session_state:
+    st.session_state["full_name"] = "Guest Speaker"
+
+# ------------------------------------------------------------------------------
+# 3. Helper Functions
+# ------------------------------------------------------------------------------
 def format_timestamp(seconds: float) -> str:
     """Format seconds into MM:SS string."""
     mins = int(seconds // 60)
@@ -128,45 +236,137 @@ def get_available_reports() -> List[str]:
 
 
 # ------------------------------------------------------------------------------
-# Auto-refresh setup
+# 4. Auto-Refresh Setup (Active in Live Evaluation Mode)
 # ------------------------------------------------------------------------------
 refresh_rate_sec = 3
 try:
     from streamlit_autorefresh import st_autorefresh
-
-    # Auto-refresh every N seconds
     st_autorefresh(interval=refresh_rate_sec * 1000, key="speech_evaluator_autorefresh")
 except ImportError:
-    # Native browser meta-refresh fallback: reloads the page every 3 seconds automatically!
-    st.markdown('<meta http-equiv="refresh" content="3">', unsafe_allow_html=True)
+    st.markdown(f'<meta http-equiv="refresh" content="{refresh_rate_sec}">', unsafe_allow_html=True)
     st.sidebar.caption("⚡ Auto-refresh active (browser meta tag)")
 
 
 # ------------------------------------------------------------------------------
-# Sidebar Navigation & Session Selection
+# 5. Sidebar Branding & Navigation
 # ------------------------------------------------------------------------------
-st.sidebar.image("https://upload.wikimedia.org/wikipedia/en/thumb/9/9f/Toastmasters_International_logo.svg/320px-Toastmasters_International_logo.svg.png", width=180)
-st.sidebar.title("Speech Evaluator")
-st.sidebar.markdown("**Host:** Raspberry Pi 3 (0.0.0.0)")
-
-available_reports = get_available_reports()
-selected_file = "evaluation_report.json"
-
-if available_reports:
-    selected_file = st.sidebar.selectbox(
-        "Select Speech Session:",
-        available_reports,
-        index=0,
-        format_func=lambda x: "Current / Latest Session" if x == "evaluation_report.json" else os.path.basename(x),
-    )
-    if os.path.exists(selected_file):
-        mtime = datetime.fromtimestamp(os.path.getmtime(selected_file)).strftime("%Y-%m-%d %H:%M:%S")
-        st.sidebar.caption(f"Last updated: {mtime}")
+# Display Local Vector Toastmasters Logo (Reliable offline)
+logo_path = os.path.join(os.path.dirname(__file__), "assets", "toastmasters_logo.svg")
+if os.path.exists(logo_path):
+    st.sidebar.image(logo_path, use_container_width=True)
 else:
-    st.sidebar.info("No speech reports found yet.")
+    st.sidebar.markdown("### 🎙️ TOASTMASTERS INTERNATIONAL")
 
-if st.sidebar.button("🔄 Manual Refresh"):
-    st.rerun()
+st.sidebar.title("Speech Evaluator")
+st.sidebar.markdown("**Host:** Raspberry Pi 3")
+
+# ------------------------------------------------------------------------------
+# 6. Sidebar: User Account / Authentication Panel
+# ------------------------------------------------------------------------------
+st.sidebar.markdown("---")
+
+if not st.session_state["logged_in"]:
+    st.sidebar.subheader("👤 User Access")
+    auth_tab = st.sidebar.radio(
+        "Choose Login Type:",
+        ["Student Login", "Sign Up", "Admin Portal"],
+        key="auth_choice",
+    )
+
+    if auth_tab == "Student Login":
+        login_user = st.sidebar.text_input("Username:", key="s_login_user")
+        login_pass = st.sidebar.text_input("Password:", type="password", key="s_login_pass")
+        if st.sidebar.button("Log In as Student", key="btn_student_login"):
+            user = db.authenticate_student(login_user, login_pass)
+            if user:
+                st.session_state["logged_in"] = True
+                st.session_state["user_role"] = "student"
+                st.session_state["username"] = user["username"]
+                st.session_state["full_name"] = user["full_name"]
+                db.set_active_speaker(user["username"], user["full_name"])
+                st.sidebar.success(f"Welcome, {user['full_name']}!")
+                st.rerun()
+            else:
+                st.sidebar.error("Invalid username or password.")
+
+    elif auth_tab == "Sign Up":
+        new_name = st.sidebar.text_input("Full Name:", key="su_name", placeholder="e.g. John Doe")
+        new_user = st.sidebar.text_input("Choose Username:", key="su_user")
+        new_pass = st.sidebar.text_input("Choose Password:", type="password", key="su_pass")
+        if st.sidebar.button("Create Account", key="btn_signup"):
+            ok, msg = db.register_student(new_user, new_name, new_pass)
+            if ok:
+                st.sidebar.success(msg)
+            else:
+                st.sidebar.error(msg)
+
+    elif auth_tab == "Admin Portal":
+        admin_pass = st.sidebar.text_input("Master Password:", type="password", key="admin_master_pass")
+        if st.sidebar.button("Login as Admin", key="btn_admin_login"):
+            if db.verify_admin_master_password(admin_pass):
+                st.session_state["logged_in"] = True
+                st.session_state["user_role"] = "admin"
+                st.session_state["username"] = "admin"
+                st.session_state["full_name"] = "Meeting Administrator"
+                st.sidebar.success("Admin portal unlocked!")
+                st.rerun()
+            else:
+                st.sidebar.error("Incorrect Master Password.")
+
+else:
+    # User is logged in
+    role_icon = "🛡️" if st.session_state["user_role"] == "admin" else "👤"
+    st.sidebar.markdown(f"**{role_icon} Logged in as:**")
+    st.sidebar.markdown(f"### {st.session_state['full_name']}")
+    st.sidebar.caption(f"Role: {st.session_state['user_role'].title()} (@{st.session_state['username']})")
+
+    if st.sidebar.button("🚪 Log Out"):
+        st.session_state["logged_in"] = False
+        st.session_state["user_role"] = "guest"
+        st.session_state["username"] = "guest"
+        st.session_state["full_name"] = "Guest Speaker"
+        st.rerun()
+
+st.sidebar.markdown("---")
+
+# Main View Navigation Selection
+if st.session_state["user_role"] == "admin":
+    current_view = st.sidebar.radio(
+        "Navigation:",
+        ["🎙️ Live Speech Evaluation", "👥 Student Directory & Analytics", "📋 All Speech Records"],
+        key="admin_nav",
+    )
+elif st.session_state["user_role"] == "student":
+    current_view = st.sidebar.radio(
+        "Navigation:",
+        ["🎙️ Live Speech Evaluation", "📊 My Speech History"],
+        key="student_nav",
+    )
+else:
+    current_view = "🎙️ Live Speech Evaluation"
+
+# ------------------------------------------------------------------------------
+# 7. Sidebar: Session Selector (Available in Live Evaluation View)
+# ------------------------------------------------------------------------------
+if current_view == "🎙️ Live Speech Evaluation":
+    available_reports = get_available_reports()
+    selected_file = "evaluation_report.json"
+
+    if available_reports:
+        selected_file = st.sidebar.selectbox(
+            "Select Speech Session:",
+            available_reports,
+            index=0,
+            format_func=lambda x: "Current / Latest Session" if x == "evaluation_report.json" else os.path.basename(x),
+        )
+        if os.path.exists(selected_file):
+            mtime = datetime.fromtimestamp(os.path.getmtime(selected_file)).strftime("%Y-%m-%d %H:%M:%S")
+            st.sidebar.caption(f"Last updated: {mtime}")
+    else:
+        st.sidebar.info("No speech reports found yet.")
+
+    if st.sidebar.button("🔄 Manual Refresh"):
+        st.rerun()
 
 st.sidebar.markdown("---")
 st.sidebar.markdown(
@@ -178,243 +378,400 @@ st.sidebar.markdown(
     """
 )
 
-# ------------------------------------------------------------------------------
-# Main Content
-# ------------------------------------------------------------------------------
-st.markdown('<div class="main-header">🎙️ Toastmasters AI Speech Evaluator</div>', unsafe_allow_html=True)
-st.markdown('<div class="sub-header">Automated Timer, Ah-Counter, and Grammarian Dashboard</div>', unsafe_allow_html=True)
 
-report = load_report_file(selected_file) if selected_file and os.path.exists(selected_file) else None
+# ==============================================================================
+# VIEW 1: LIVE SPEECH EVALUATION DASHBOARD
+# ==============================================================================
+if current_view == "🎙️ Live Speech Evaluation":
+    st.markdown('<div class="main-header">🎙️ Toastmasters AI Speech Evaluator</div>', unsafe_allow_html=True)
+    st.markdown('<div class="sub-header">Automated Timer, Ah-Counter, and Grammarian Dashboard</div>', unsafe_allow_html=True)
 
-if not report:
-    # Standby Screen when no speech has occurred yet
-    st.warning("⏳ **Awaiting Speech Capture...**")
-    st.info(
-        """
-        The physical toggle switch is currently **OFF** (or no evaluation report has been finalized yet).
-        
-        **How to start:**
-        1. Flip the physical toggle switch connected to **GPIO 18 ON**.
-        2. Speak into the **M-305 microphone**. The physical 16x2 LCD will display the live timer (`Time: MM:SS`).
-        3. Flip the switch **OFF** when you finish. The evaluation will process and instantly appear on this dashboard!
-        """
-    )
-    st.stop()
+    # Active Speaker indicator at podium
+    active_speaker = db.get_active_speaker()
+    col_a, col_b = st.columns([2, 1])
+    with col_a:
+        st.info(f"🎤 **Current Speaker at Podium:** {active_speaker['full_name']} (`@{active_speaker['username']}`)")
+    with col_b:
+        if st.session_state["user_role"] == "admin":
+            all_students = db.get_all_students()
+            options = ["Guest Speaker"] + [f"{s['full_name']} ({s['username']})" for s in all_students]
+            selected_speaker = st.selectbox("Assign Active Speaker:", options, index=0)
+            if st.button("Set Active"):
+                if selected_speaker == "Guest Speaker":
+                    db.set_active_speaker("guest", "Guest Speaker")
+                else:
+                    uname = selected_speaker.split("(")[-1].replace(")", "").strip()
+                    s_name = selected_speaker.split("(")[0].strip()
+                    db.set_active_speaker(uname, s_name)
+                st.rerun()
 
-# Extract Data
-session_id = report.get("session_id", "N/A")
-timing = report.get("timing", {})
-transcript_summary = report.get("transcript_summary", {})
-ah_counter = report.get("ah_counter", {})
-grammarian = report.get("grammarian", {})
-evaluation = report.get("toastmasters_evaluation", {})
+    report = load_report_file(selected_file) if selected_file and os.path.exists(selected_file) else None
 
-overall_score = report.get("overall_score", evaluation.get("overall_score", 85.0))
-overall_grade = report.get("overall_grade", evaluation.get("overall_grade", "B (Proficient)"))
-
-# ------------------------------------------------------------------------------
-# 1. Overall Speech Score & Summary Metrics
-# ------------------------------------------------------------------------------
-score_col, summary_col = st.columns([1, 2])
-
-with score_col:
-    st.markdown(
-        f"""
-        <div class="score-card">
-            <div style="text-transform: uppercase; letter-spacing: 1px; font-size: 0.9rem;">Overall Speech Score</div>
-            <div class="score-number">{overall_score:.0f}</div>
-            <div class="score-grade">{overall_grade}</div>
-            <div style="font-size: 0.85rem; margin-top: 0.5rem; opacity: 0.85;">Session: {session_id}</div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-with summary_col:
-    # Top Metrics Grid
-    m1, m2, m3, m4 = st.columns(4)
-    with m1:
-        st.metric(
-            label="Speech Duration",
-            value=timing.get("formatted_duration", "00:00"),
-            help=timing.get("timing_status", "Standard speech"),
+    if not report:
+        st.warning("⏳ **Awaiting Speech Capture...**")
+        st.info(
+            """
+            The physical toggle switch is currently **OFF** (or no evaluation report has been finalized yet).
+            
+            **How to start:**
+            1. Flip the physical toggle switch connected to **GPIO 18 ON**.
+            2. Speak into the **M-305 microphone**. The physical 16x2 LCD will display the live timer (`Time: MM:SS`).
+            3. Flip the switch **OFF** when you finish. The evaluation will process and instantly appear on this dashboard!
+            """
         )
-    with m2:
-        st.metric(
-            label="Pacing (WPM)",
-            value=f"{transcript_summary.get('words_per_minute', 0):.0f}",
-            delta=transcript_summary.get("pacing_rating", "Optimal"),
-            delta_color="normal" if transcript_summary.get("pacing_rating") == "Optimal" else "inverse",
-        )
-    with m3:
-        st.metric(
-            label="Total Fillers",
-            value=ah_counter.get("total_fillers", 0),
-            delta=f"{ah_counter.get('fillers_per_minute', 0):.1f} / min",
-            delta_color="inverse" if ah_counter.get("total_fillers", 0) > 0 else "normal",
-        )
-    with m4:
-        st.metric(
-            label="Grammar Issues",
-            value=grammarian.get("total_errors", 0),
-            delta=f"{grammarian.get('error_density_per_100_words', 0):.1f} / 100w",
-            delta_color="inverse" if grammarian.get("total_errors", 0) > 0 else "normal",
-        )
+        st.stop()
 
-    # Toastmasters Feedback Box
-    with st.container():
-        st.markdown("**Evaluator Feedback & Observations:**")
-        feedback_list = evaluation.get("summary", [])
-        if feedback_list:
-            for item in feedback_list:
-                st.markdown(f"- {item}")
-        else:
-            st.markdown("- Speech was delivered clearly.")
+    # Link report to database for student history if not already recorded
+    if selected_file == "evaluation_report.json" or "reports" in selected_file:
+        db.record_speech_session(report, selected_file)
 
-st.markdown("---")
+    # Extract Data
+    session_id = report.get("session_id", "N/A")
+    timing = report.get("timing", {})
+    transcript_summary = report.get("transcript_summary", {})
+    ah_counter = report.get("ah_counter", {})
+    grammarian = report.get("grammarian", {})
+    evaluation = report.get("toastmasters_evaluation", {})
 
-# ------------------------------------------------------------------------------
-# 2. Disfluency Breakdown & Timeline
-# ------------------------------------------------------------------------------
-st.subheader("🗣️ Disfluency & Ah-Counter Breakdown")
+    overall_score = report.get("overall_score", evaluation.get("overall_score", 85.0))
+    overall_grade = report.get("overall_grade", evaluation.get("overall_grade", "B (Proficient)"))
 
-f_col1, f_col2 = st.columns([1, 1])
+    # 1. Overall Speech Score & Summary Metrics
+    score_col, summary_col = st.columns([1, 2])
 
-with f_col1:
-    vocal_pauses = ah_counter.get("vocalized_pauses_count", 0)
-    crutches = ah_counter.get("verbal_crutches_count", 0)
-    total_fillers = ah_counter.get("total_fillers", 0)
-
-    p1, p2, p3 = st.columns(3)
-    p1.metric("Total Fillers", total_fillers)
-    p2.metric("Vocalized Pauses ('ah', 'um')", vocal_pauses)
-    p3.metric("Verbal Crutches ('like', 'you know')", crutches)
-
-    # Frequency breakdown table
-    freq = ah_counter.get("frequency_breakdown", {})
-    if freq:
-        st.markdown("**Most Frequent Fillers:**")
-        # Format as simple bar list
-        for word, count in freq.items():
-            pct = int((count / max(1, total_fillers)) * 100)
-            st.markdown(
-                f"- **`{word}`**: {count} time(s) &nbsp; "
-                f"<div style='display:inline-block; width:{pct}%; max-width:200px; height:8px; background-color:#772432; border-radius:4px;'></div>",
-                unsafe_allow_html=True,
-            )
-    else:
-        st.success("🎉 No filler words detected! Excellent vocal discipline.")
-
-with f_col2:
-    timeline_events = ah_counter.get("timeline_events", [])
-    st.markdown("**Chronological Disfluency Timeline:**")
-
-    if timeline_events:
-        # Display scrollable table with timestamps and tags
-        table_rows = []
-        for ev in timeline_events:
-            t_str = format_timestamp(ev.get("start_time", 0.0))
-            w = ev.get("word", "")
-            cat = ev.get("category", "")
-            badge = "vocalized_pause" if "pause" in cat else "verbal_crutch"
-            badge_class = "filler-badge-pause" if badge == "vocalized_pause" else "filler-badge-crutch"
-            table_rows.append(
-                f"<tr>"
-                f"<td style='padding:6px 12px; font-family:monospace; font-weight:bold;'>{t_str}</td>"
-                f"<td style='padding:6px 12px; font-weight:bold;'>{w}</td>"
-                f"<td style='padding:6px 12px;'><span class='{badge_class}'>{cat.replace('_', ' ').title()}</span></td>"
-                f"</tr>"
-            )
-
-        html_table = f"""
-        <div style="max-height: 240px; overflow-y: auto; border: 1px solid rgba(128, 128, 128, 0.25); border-radius: 8px;">
-            <table style="width:100%; border-collapse:collapse; font-size:0.9rem; color: inherit;">
-                <thead style="background-color: rgba(255, 255, 255, 0.08); position:sticky; top:0;">
-                    <tr>
-                        <th style="padding:6px 12px; text-align:left;">Time</th>
-                        <th style="padding:6px 12px; text-align:left;">Word / Phrase</th>
-                        <th style="padding:6px 12px; text-align:left;">Category</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {''.join(table_rows)}
-                </tbody>
-            </table>
-        </div>
-        """
-        st.markdown(html_table, unsafe_allow_html=True)
-    else:
-        st.info("No timeline events to display.")
-
-st.markdown("---")
-
-# ------------------------------------------------------------------------------
-# 3. Grammarian Report & Highlighted Transcript
-# ------------------------------------------------------------------------------
-st.subheader("📖 Grammarian Report & Transcript")
-
-full_transcript = transcript_summary.get("full_transcript", "")
-issues = grammarian.get("issues", [])
-
-if not full_transcript:
-    st.warning(
-        "⚠️ **No words were detected in this audio recording.**\n\n"
-        "If you spoke into the microphone, check:\n"
-        "1. Is the physical switch on the M-305 microphone handle switched to **ON**?\n"
-        "2. Is the microphone cable plugged into the **MIC (pink)** input jack of the USB adapter?\n"
-        "3. Is the microphone unmuted in **alsamixer**? (Run `alsamixer`, press `F4` for Capture, press `Space` to unmute, and press `Up Arrow` to raise gain)."
-    )
-else:
-    # Build highlighted transcript
-    # Highlight the specific errant token/phrase within its sentence context
-    highlighted_text = full_transcript
-    for idx, issue in enumerate(issues):
-        context_text = issue.get("context_text", "")
-        c_off = int(issue.get("context_offset", 0))
-        c_len = int(issue.get("length", 0))
-
-        if context_text and context_text in highlighted_text:
-            if 0 <= c_off < len(context_text) and (c_off + c_len) <= len(context_text) and c_len > 0:
-                err_word = context_text[c_off : c_off + c_len]
-                highlighted_context = (
-                    context_text[:c_off]
-                    + f"<span class='grammar-error' title='Issue #{idx+1}: {issue.get('message', '')}'>{err_word}</span>"
-                    + context_text[c_off + c_len :]
-                )
-                highlighted_text = highlighted_text.replace(context_text, highlighted_context, 1)
-            else:
-                replacement = (
-                    f"<span class='grammar-error' title='Issue #{idx+1}: {issue.get('message', '')}'>"
-                    f"{context_text}</span>"
-                )
-                highlighted_text = highlighted_text.replace(context_text, replacement, 1)
-
-    t_col1, t_col2 = st.columns([3, 2])
-
-    with t_col1:
-        st.markdown("**Transcript (Grammatical Opportunities Highlighted):**")
+    with score_col:
         st.markdown(
             f"""
-            <div style="background-color: rgba(255, 255, 255, 0.05); color: inherit; border: 1px solid rgba(128, 128, 128, 0.25); border-radius: 8px; padding: 1.2rem; font-size: 1.05rem; line-height: 1.7; min-height: 160px;">
-                {highlighted_text}
+            <div class="score-card">
+                <div style="text-transform: uppercase; letter-spacing: 1px; font-size: 0.9rem;">Overall Speech Score</div>
+                <div class="score-number">{overall_score:.0f}</div>
+                <div class="score-grade">{overall_grade}</div>
+                <div style="font-size: 0.85rem; margin-top: 0.5rem; opacity: 0.85;">Session: {session_id}</div>
             </div>
             """,
             unsafe_allow_html=True,
         )
 
-    with t_col2:
-        st.markdown(f"**Identified Issues ({len(issues)}):**")
-        if issues:
-            for idx, issue in enumerate(issues):
-                with st.expander(f"Issue #{idx+1}: {issue.get('rule_id', 'Grammar Notice')}"):
-                    st.markdown(f"**Explanation:** {issue.get('message', '')}")
-                    suggestions = issue.get("suggestions", [])
-                    if suggestions:
-                        sug_html = " ".join([f"<span class='grammar-fix'>{s}</span>" for s in suggestions])
-                        st.markdown(f"**Suggested Correction(s):** {sug_html}", unsafe_allow_html=True)
-                    st.caption(f"Rule: {issue.get('rule_description', '')}")
-        else:
-            st.success("✨ Zero grammatical errors identified. Excellent syntax!")
+    with summary_col:
+        m1, m2, m3, m4 = st.columns(4)
+        with m1:
+            st.metric(
+                label="Speech Duration",
+                value=timing.get("formatted_duration", "00:00"),
+                help=timing.get("timing_status", "Standard speech"),
+            )
+        with m2:
+            st.metric(
+                label="Pacing (WPM)",
+                value=f"{transcript_summary.get('words_per_minute', 0):.0f}",
+                delta=transcript_summary.get("pacing_rating", "Optimal"),
+                delta_color="normal" if transcript_summary.get("pacing_rating") == "Optimal" else "inverse",
+            )
+        with m3:
+            st.metric(
+                label="Total Fillers",
+                value=ah_counter.get("total_fillers", 0),
+                delta=f"{ah_counter.get('fillers_per_minute', 0):.1f} / min",
+                delta_color="inverse" if ah_counter.get("total_fillers", 0) > 0 else "normal",
+            )
+        with m4:
+            st.metric(
+                label="Grammar Issues",
+                value=grammarian.get("total_errors", 0),
+                delta=f"{grammarian.get('error_density_per_100_words', 0):.1f} / 100w",
+                delta_color="inverse" if grammarian.get("total_errors", 0) > 0 else "normal",
+            )
 
+        with st.container():
+            st.markdown("**Evaluator Feedback & Observations:**")
+            feedback_list = evaluation.get("summary", [])
+            if feedback_list:
+                for item in feedback_list:
+                    st.markdown(f"- {item}")
+            else:
+                st.markdown("- Speech was delivered clearly.")
+
+    st.markdown("---")
+
+    # 2. Disfluency Breakdown & Timeline
+    st.subheader("🗣️ Disfluency & Ah-Counter Breakdown")
+    f_col1, f_col2 = st.columns([1, 1])
+
+    with f_col1:
+        vocal_pauses = ah_counter.get("vocalized_pauses_count", 0)
+        crutches = ah_counter.get("verbal_crutches_count", 0)
+        total_fillers = ah_counter.get("total_fillers", 0)
+
+        p1, p2, p3 = st.columns(3)
+        p1.metric("Total Fillers", total_fillers)
+        p2.metric("Vocalized Pauses ('ah', 'um')", vocal_pauses)
+        p3.metric("Verbal Crutches ('like', 'you know')", crutches)
+
+        freq = ah_counter.get("frequency_breakdown", {})
+        if freq:
+            st.markdown("**Most Frequent Fillers:**")
+            for word, count in freq.items():
+                pct = int((count / max(1, total_fillers)) * 100)
+                st.markdown(
+                    f"- **`{word}`**: {count} time(s) &nbsp; "
+                    f"<div style='display:inline-block; width:{pct}%; max-width:200px; height:8px; background-color:#772432; border-radius:4px;'></div>",
+                    unsafe_allow_html=True,
+                )
+        else:
+            st.success("🎉 No filler words detected! Excellent vocal discipline.")
+
+    with f_col2:
+        timeline_events = ah_counter.get("timeline_events", [])
+        st.markdown("**Chronological Disfluency Timeline:**")
+
+        if timeline_events:
+            table_rows = []
+            for ev in timeline_events:
+                t_str = format_timestamp(ev.get("start_time", 0.0))
+                w = ev.get("word", "")
+                cat = ev.get("category", "")
+                badge = "vocalized_pause" if "pause" in cat else "verbal_crutch"
+                badge_class = "filler-badge-pause" if badge == "vocalized_pause" else "filler-badge-crutch"
+                table_rows.append(
+                    f"<tr>"
+                    f"<td style='padding:6px 12px; font-family:monospace; font-weight:bold;'>{t_str}</td>"
+                    f"<td style='padding:6px 12px; font-weight:bold;'>{w}</td>"
+                    f"<td style='padding:6px 12px;'><span class='{badge_class}'>{cat.replace('_', ' ').title()}</span></td>"
+                    f"</tr>"
+                )
+
+            html_table = f"""
+            <div style="max-height: 240px; overflow-y: auto; border: 1px solid rgba(128, 128, 128, 0.25); border-radius: 8px;">
+                <table style="width:100%; border-collapse:collapse; font-size:0.9rem; color: inherit;">
+                    <thead style="background-color: rgba(255, 255, 255, 0.08); position:sticky; top:0;">
+                        <tr>
+                            <th style="padding:6px 12px; text-align:left;">Time</th>
+                            <th style="padding:6px 12px; text-align:left;">Word / Phrase</th>
+                            <th style="padding:6px 12px; text-align:left;">Category</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {''.join(table_rows)}
+                    </tbody>
+                </table>
+            </div>
+            """
+            st.markdown(html_table, unsafe_allow_html=True)
+        else:
+            st.info("No timeline events to display.")
+
+    st.markdown("---")
+
+    # 3. Grammarian Report & Interactive Hover Tooltip Transcript
+    st.subheader("📖 Grammarian Report & Transcript")
+    full_transcript = transcript_summary.get("full_transcript", "")
+    issues = grammarian.get("issues", [])
+
+    if not full_transcript:
+        st.warning(
+            "⚠️ **No words were detected in this audio recording.**\n\n"
+            "If you spoke into the microphone, check:\n"
+            "1. Is the physical switch on the M-305 microphone handle switched to **ON**?\n"
+            "2. Is the microphone cable plugged into the **MIC (pink)** input jack of the USB adapter?\n"
+            "3. Is the microphone unmuted in **alsamixer**? (Run `alsamixer`, press `F4` for Capture, press `Space` to unmute, and press `Up Arrow` to raise gain)."
+        )
+    else:
+        # Build Grammarly-style highlighted transcript with hover cards
+        highlighted_text = html.escape(full_transcript)
+        for idx, issue in enumerate(issues):
+            context_text = issue.get("context_text", "")
+            c_off = int(issue.get("context_offset", 0))
+            c_len = int(issue.get("length", 0))
+            rule_id = html.escape(issue.get("rule_id", "Grammar Opportunity"))
+            msg = html.escape(issue.get("message", "Grammar rule opportunity."))
+            suggestions = issue.get("suggestions", [])
+
+            sug_html = ""
+            if suggestions:
+                sug_pills = "".join([f"<span class='tooltip-suggestion'>{html.escape(s)}</span>" for s in suggestions[:2]])
+                sug_html = f"<div style='margin-top:6px;'><b>Suggested Fix:</b> {sug_pills}</div>"
+
+            # Check if context_text is in highlighted text
+            esc_context = html.escape(context_text)
+            if esc_context and esc_context in highlighted_text:
+                if 0 <= c_off < len(context_text) and (c_off + c_len) <= len(context_text) and c_len > 0:
+                    raw_err_word = context_text[c_off : c_off + c_len]
+                    err_word = html.escape(raw_err_word)
+                    hover_span = (
+                        f"<span class='grammar-highlight'>{err_word}"
+                        f"<span class='grammar-tooltip'>"
+                        f"<span class='tooltip-badge'>Issue #{idx+1} · {rule_id}</span>"
+                        f"<div class='tooltip-msg'>{msg}</div>"
+                        f"{sug_html}"
+                        f"</span>"
+                        f"</span>"
+                    )
+                    prefix = html.escape(context_text[:c_off])
+                    suffix = html.escape(context_text[c_off + c_len :])
+                    highlighted_context = prefix + hover_span + suffix
+                    highlighted_text = highlighted_text.replace(esc_context, highlighted_context, 1)
+                else:
+                    hover_span = (
+                        f"<span class='grammar-highlight'>{esc_context}"
+                        f"<span class='grammar-tooltip'>"
+                        f"<span class='tooltip-badge'>Issue #{idx+1} · {rule_id}</span>"
+                        f"<div class='tooltip-msg'>{msg}</div>"
+                        f"{sug_html}"
+                        f"</span>"
+                        f"</span>"
+                    )
+                    highlighted_text = highlighted_text.replace(esc_context, hover_span, 1)
+
+        t_col1, t_col2 = st.columns([3, 2])
+
+        with t_col1:
+            st.markdown("**Transcript (Hover over red highlights for Grammarly-style insights):**")
+            st.markdown(
+                f"""
+                <div class="transcript-box">
+                    {highlighted_text}
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+        with t_col2:
+            st.markdown(f"**Identified Spoken Grammar Issues ({len(issues)}):**")
+            if issues:
+                for idx, issue in enumerate(issues):
+                    with st.expander(f"Issue #{idx+1}: {issue.get('rule_id', 'Grammar Opportunity')}"):
+                        st.markdown(f"**Explanation:** {issue.get('message', '')}")
+                        suggestions = issue.get("suggestions", [])
+                        if suggestions:
+                            sug_html = " ".join([f"<span class='grammar-fix'>{s}</span>" for s in suggestions])
+                            st.markdown(f"**Suggested Correction(s):** {sug_html}", unsafe_allow_html=True)
+                        st.caption(f"Rule: {issue.get('rule_description', '')}")
+            else:
+                st.success("✨ Zero spoken grammar errors identified. Excellent vocal syntax!")
+
+
+# ==============================================================================
+# VIEW 2: STUDENT SPEECH HISTORY (For Logged In Students)
+# ==============================================================================
+elif current_view == "📊 My Speech History":
+    st.markdown(f'<div class="main-header">📊 {st.session_state["full_name"]}\'s Speech Journey</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="sub-header">Personal evaluation history and progression metrics (@{st.session_state["username"]})</div>', unsafe_allow_html=True)
+
+    summary = db.get_student_summary(st.session_state["username"])
+    speeches = db.get_speeches_for_student(st.session_state["username"])
+
+    # Top summary metrics
+    s1, s2, s3, s4, s5 = st.columns(5)
+    s1.metric("Speeches Given", summary.get("total_speeches", 0))
+    s2.metric("Average Score", f"{summary.get('avg_score', 0.0):.1f}")
+    s3.metric("Personal Best", f"{summary.get('best_score', 0.0):.1f}")
+    s4.metric("Avg Fillers / Speech", f"{summary.get('avg_fillers', 0.0):.1f}")
+    s5.metric("Avg WPM Pacing", f"{summary.get('avg_wpm', 0.0):.0f}")
+
+    st.markdown("---")
+    st.subheader("📜 Past Speech Evaluations")
+
+    if speeches:
+        for idx, sp in enumerate(speeches):
+            with st.expander(f"Speech #{len(speeches)-idx}: {sp['created_at']} — Score: {sp['overall_score']} pts ({sp['overall_grade']})"):
+                c1, c2, c3, c4 = st.columns(4)
+                c1.write(f"⏱️ **Duration:** {sp['formatted_duration']}")
+                c2.write(f"🏃 **Pacing:** {sp['wpm']:.0f} WPM ({sp['pacing_rating']})")
+                c3.write(f"🗣️ **Fillers:** {sp['total_fillers']} (Pauses: {sp['vocalized_pauses']}, Crutches: {sp['verbal_crutches']})")
+                c4.write(f"📖 **Grammar Errors:** {sp['grammar_errors']}")
+
+                # Load report file if available
+                rep_path = sp.get("report_file", "")
+                if rep_path and os.path.exists(rep_path):
+                    sp_rep = load_report_file(rep_path)
+                    if sp_rep:
+                        t_text = sp_rep.get("transcript_summary", {}).get("full_transcript", "")
+                        if t_text:
+                            st.markdown(f"**Transcript:**\n> {t_text}")
+    else:
+        st.info("No recorded speeches found yet under your account. Step up to the podium and flip the switch to record your first speech!")
+
+
+# ==============================================================================
+# VIEW 3: ADMIN DIRECTORY & ANALYTICS (Master Password Protected)
+# ==============================================================================
+elif current_view == "👥 Student Directory & Analytics":
+    st.markdown('<div class="main-header">👥 Toastmasters Student Directory</div>', unsafe_allow_html=True)
+    st.markdown('<div class="sub-header">Master Administrator Roster and Performance Tracking</div>', unsafe_allow_html=True)
+
+    all_students = db.get_all_students()
+    all_sessions = db.get_all_speech_sessions()
+
+    # Club summary
+    m1, m2, m3 = st.columns(3)
+    m1.metric("Registered Students", len(all_students))
+    m2.metric("Total Club Speeches", len(all_sessions))
+    avg_club_score = (
+        round(sum(s["overall_score"] for s in all_sessions) / max(1, len(all_sessions)), 1)
+        if all_sessions
+        else 0.0
+    )
+    m3.metric("Club Average Score", f"{avg_club_score} pts")
+
+    st.markdown("---")
+    st.subheader("📋 Student Roster & Summary")
+
+    if all_students:
+        st.dataframe(
+            [
+                {
+                    "Name": s["full_name"],
+                    "Username": f"@{s['username']}",
+                    "Speeches Given": s["speech_count"],
+                    "Avg Score": s["avg_score"],
+                    "Total Fillers Logged": s["total_fillers_sum"],
+                    "Avg WPM": s["avg_wpm"],
+                    "Registered Date": s["created_at"],
+                }
+                for s in all_students
+            ],
+            use_container_width=True,
+        )
+    else:
+        st.info("No students registered yet. Students can register anytime using the sidebar sign-up form.")
+
+
+# ==============================================================================
+# VIEW 4: ADMIN ALL SPEECH RECORDS
+# ==============================================================================
+elif current_view == "📋 All Speech Records":
+    st.markdown('<div class="main-header">📋 Master Speech Session Log</div>', unsafe_allow_html=True)
+    st.markdown('<div class="sub-header">Complete historical audit trail of all speeches recorded by the evaluator</div>', unsafe_allow_html=True)
+
+    all_sessions = db.get_all_speech_sessions()
+
+    if all_sessions:
+        st.dataframe(
+            [
+                {
+                    "Session ID": s["session_id"],
+                    "Speaker Name": s["full_name"],
+                    "Username": f"@{s['username']}",
+                    "Score": s["overall_score"],
+                    "Grade": s["overall_grade"],
+                    "Duration": s["formatted_duration"],
+                    "Words": s["total_words"],
+                    "WPM": f"{s['wpm']:.0f}",
+                    "Pacing": s["pacing_rating"],
+                    "Fillers": s["total_fillers"],
+                    "Grammar Errors": s["grammar_errors"],
+                    "Date & Time": s["created_at"],
+                }
+                for s in all_sessions
+            ],
+            use_container_width=True,
+        )
+    else:
+        st.info("No speech sessions recorded yet in database.")
+
+
+# ------------------------------------------------------------------------------
+# 8. Footer
+# ------------------------------------------------------------------------------
 st.markdown("---")
-st.caption("AI Speech Evaluator for Toastmasters | Running on Raspberry Pi 3 | Auto-refreshing every 3 seconds")
+st.caption("AI Speech Evaluator for Toastmasters | Auto-refreshing every 3 seconds")

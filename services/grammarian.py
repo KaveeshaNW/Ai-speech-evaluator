@@ -267,8 +267,49 @@ class GrammarianEngine:
 
         return all_issues
 
+    @staticmethod
+    def is_spoken_grammar_issue(rule_id: str, issue_type: str, category_id: str, message: str) -> bool:
+        """
+        Filter out punctuation, capitalization, and typographical artifacts
+        so only genuine spoken grammar, syntax, and word choice issues are evaluated.
+        """
+        rule_id_upper = (rule_id or "").upper()
+        cat_upper = (category_id or "").upper()
+        type_lower = (issue_type or "").lower()
+
+        # Exclude typographical and whitespace issue types
+        if type_lower in {"typographical", "whitespace"}:
+            return False
+
+        # Exclude punctuation, typography, casing categories
+        if cat_upper in {"TYPOGRAPHY", "PUNCTUATION", "CASING", "WHITESPACE"}:
+            return False
+
+        # Exclude rule IDs that specifically relate to punctuation or capitalization
+        punctuation_keywords = [
+            "COMMA", "PUNCTUATION", "QUOTE", "HYPHEN", "DASH", "APOSTROPHE",
+            "PERIOD", "QUESTION_MARK", "EXCLAMATION", "UPPERCASE_SENTENCE_START",
+            "CAPITALIZATION", "WHITESPACE", "DOUBLE_PUNCTUATION", "SPACE_BEFORE",
+            "MISSING_COMMA", "EXTRA_COMMA", "CONSECUTIVE_SPACES", "EN_A_VS_AN_BEFORE_CAPITAL"
+        ]
+        if any(kw in rule_id_upper for kw in punctuation_keywords):
+            return False
+
+        # Exclude message hints solely about punctuation or capitalization
+        msg_lower = (message or "").lower()
+        if (
+            "missing comma" in msg_lower
+            or "unpaired quote" in msg_lower
+            or "capitalize" in msg_lower
+            or "add a comma" in msg_lower
+            or "don't put a space before" in msg_lower
+        ):
+            return False
+
+        return True
+
     def _parse_languagetool_response(self, original_text: str, data: Dict[str, Any]) -> List[GrammarIssue]:
-        """Parse the JSON response from LanguageTool Cloud API."""
+        """Parse the JSON response from LanguageTool Cloud API, filtering punctuation artifacts."""
         issues: List[GrammarIssue] = []
         matches = data.get("matches", [])
 
@@ -277,7 +318,14 @@ class GrammarianEngine:
             rule_id = rule.get("id", "UNKNOWN_RULE")
             rule_desc = rule.get("description", "")
             issue_type = rule.get("issueType", "grammar")
+            category = rule.get("category", {})
+            category_id = category.get("id", "GRAMMAR")
             message = match.get("message", "")
+
+            # Filter out punctuation marks and typographical STT artifacts
+            if not self.is_spoken_grammar_issue(rule_id, issue_type, category_id, message):
+                continue
+
             offset = int(match.get("offset", 0))
             length = int(match.get("length", 0))
 

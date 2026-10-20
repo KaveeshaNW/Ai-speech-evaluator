@@ -282,6 +282,40 @@ class TestGrammarianEngine(unittest.TestCase):
         self.grammarian.wait_completion(timeout=5.0)
         self.assertEqual(len(self.grammarian._active_futures), 0)
 
+    @patch("requests.Session.post")
+    def test_spoken_grammar_filtering_ignores_punctuation(self, mock_post):
+        """Verify punctuation and typography rules are filtered out while syntax errors are preserved."""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {
+            "matches": [
+                {
+                    "message": "Missing comma before coordinate conjunction",
+                    "rule": {"id": "COMMA_PARENTHESIS_WHITESPACE", "issueType": "typographical", "category": {"id": "TYPOGRAPHY"}},
+                    "offset": 5, "length": 1, "context": {"text": "hello world", "offset": 5, "length": 1},
+                    "replacements": [{"value": ","}]
+                },
+                {
+                    "message": "Sentence should start with an uppercase letter",
+                    "rule": {"id": "UPPERCASE_SENTENCE_START", "issueType": "grammar", "category": {"id": "CASING"}},
+                    "offset": 0, "length": 5, "context": {"text": "hello world", "offset": 0, "length": 5},
+                    "replacements": [{"value": "Hello"}]
+                },
+                {
+                    "message": "Subject-verb agreement error",
+                    "rule": {"id": "THEY_WAS", "issueType": "grammar", "category": {"id": "GRAMMAR"}},
+                    "offset": 0, "length": 8, "context": {"text": "They was here", "offset": 0, "length": 8},
+                    "replacements": [{"value": "They were"}]
+                }
+            ]
+        }
+        mock_post.return_value = mock_response
+
+        issues = self.grammarian.check_text_sync("hello world they was here")
+        # Punctuation and casing rules must be ignored, only the true grammar issue remains
+        self.assertEqual(len(issues), 1)
+        self.assertEqual(issues[0].rule_id, "THEY_WAS")
+
 
 class TestReportGenerator(unittest.TestCase):
     """Test suite for Toastmasters JSON Evaluation Report generation."""
