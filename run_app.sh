@@ -24,7 +24,15 @@ if command -v iptables &> /dev/null; then
     sudo iptables -t nat -A PREROUTING -p tcp --dport 8051 -j REDIRECT --to-port 8501 2>/dev/null || true
 fi
 
-# 3. Activate Python virtual environment
+# 3. Automatically unmute and set USB microphone capture volume to 100% in ALSA
+amixer set 'Mic' 100% unmute cap 2>/dev/null || true
+amixer set 'Capture' 100% unmute cap 2>/dev/null || true
+amixer -c 1 set 'Mic' 100% unmute cap 2>/dev/null || true
+amixer -c 1 set 'Capture' 100% unmute cap 2>/dev/null || true
+amixer -c 2 set 'Mic' 100% unmute cap 2>/dev/null || true
+amixer -c 2 set 'Capture' 100% unmute cap 2>/dev/null || true
+
+# 4. Activate Python virtual environment
 if [ -f "/home/astro/speech_env/bin/activate" ]; then
     source "/home/astro/speech_env/bin/activate"
 elif [ -f "$HOME/speech_env/bin/activate" ]; then

@@ -586,6 +586,51 @@ if current_view == "🎙️ Live Speech Evaluation":
 
                     time.sleep(0.3)
                     st.rerun()
+
+        with st.expander("🧪 Test Speech Simulator (Admin Evaluation Tool)", expanded=False):
+            st.caption("Instantly test Grammarian error detection and Ah-Counter without speaking into the microphone.")
+            test_sample_text = st.text_area(
+                "Speech text with grammatical errors to test:",
+                value="Good morning fellow Toastmasters um today they was very happy and we goes to the conference like you know.",
+                height=80,
+                key="test_speech_input",
+            )
+            if st.button("▶️ Run Test Speech Evaluation", use_container_width=True):
+                from services.ah_counter import AhCounter
+                from services.grammarian import GrammarianEngine
+                from services.report_generator import ReportGenerator
+
+                sim_ah = AhCounter()
+                words = test_sample_text.split()
+                sim_words = []
+                for idx, w in enumerate(words):
+                    clean = w.strip(".,?!")
+                    sim_words.append({
+                        "word": clean,
+                        "punctuated_word": w,
+                        "start": round(idx * 0.4, 2),
+                        "end": round(idx * 0.4 + 0.3, 2),
+                        "confidence": 0.98,
+                    })
+                sim_ah.process_words(sim_words)
+
+                sim_gram = GrammarianEngine()
+                sim_issues = sim_gram.check_text_sync(test_sample_text)
+                sim_gram._issues = sim_issues
+
+                sim_rep_gen = ReportGenerator()
+                rep_path, rep_data = sim_rep_gen.generate(
+                    session_id=datetime.now().strftime("%Y%m%d_%H%M%S"),
+                    start_time=time.time() - 30.0,
+                    end_time=time.time(),
+                    full_transcript=test_sample_text,
+                    ah_counter=sim_ah,
+                    grammarian=sim_gram,
+                )
+                db.record_speech_session(rep_data, "evaluation_report.json")
+                st.success("Test speech evaluated! Refreshing...")
+                time.sleep(0.5)
+                st.rerun()
     else:
         # Students / Viewers see the podium speaker assigned by the Admin
         st.info(
