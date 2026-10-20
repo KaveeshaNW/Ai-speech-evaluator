@@ -2,14 +2,14 @@
 Streamlit Web Dashboard for AI Speech Evaluator (Toastmasters Assistant).
 Runs on 0.0.0.0:8501 for local network accessibility from phones, tablets, or laptops.
 
-Features:
-1. Student Sign-Up & Login: Tracks individual student speech journeys.
-2. Admin Portal (Master Password): View all registered students, performance analytics, and manage active speaker.
-3. Live Evaluation Dashboard:
-   - Overall Speech Score & Summary Metrics (WPM, Pacing, Duration, Toastmasters evaluation).
-   - Disfluency Breakdown (Total count, category breakdown, frequency distribution, exact timeline).
-   - Grammarly-Style Interactive Transcript: Highlighted grammar errors with instant hover cards explaining rules and suggestions.
-4. Auto-refreshing background updates for live evaluation reports.
+Website-Style Authentication & Access Control:
+- Full-screen login / registration portal: Users must log in to access the system.
+- Student Accounts: Sign up, log in, view personal speech history, and progress analytics.
+- Admin Portal (Master Password): View all registered students, performance analytics, and manage active speaker.
+- Live Evaluation Dashboard:
+  * Overall Speech Score & Summary Metrics (WPM, Pacing, Duration, Toastmasters evaluation).
+  * Disfluency Breakdown (Total count, category breakdown, frequency distribution, exact timeline).
+  * Grammarly-Style Interactive Transcript: Highlighted grammar errors with instant hover cards explaining rules and suggestions.
 """
 
 import glob
@@ -27,7 +27,7 @@ from services.auth_db import AuthDB
 # 1. Page Configuration & Custom CSS
 # ------------------------------------------------------------------------------
 st.set_page_config(
-    page_title="AI Speech Evaluator | Toastmasters Dashboard",
+    page_title="AI Speech Evaluator | Toastmasters Portal",
     page_icon="🎙️",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -182,6 +182,32 @@ st.markdown(
         border-radius: 4px;
         font-weight: 600;
     }
+
+    /* ------------------------------------------------------------- */
+    /* Website Portal Login Styles                                   */
+    /* ------------------------------------------------------------- */
+    .portal-box {
+        background: rgba(255, 255, 255, 0.04);
+        border: 1px solid rgba(128, 128, 128, 0.25);
+        border-radius: 14px;
+        padding: 2rem;
+        box-shadow: 0 12px 32px rgba(0, 0, 0, 0.4);
+        margin-top: 1rem;
+    }
+    .portal-title {
+        font-size: 1.85rem;
+        font-weight: 700;
+        color: #772432;
+        text-align: center;
+        margin-top: 0.5rem;
+        margin-bottom: 0.2rem;
+    }
+    .portal-subtitle {
+        font-size: 0.95rem;
+        opacity: 0.82;
+        text-align: center;
+        margin-bottom: 1.5rem;
+    }
     </style>
     """,
     unsafe_allow_html=True,
@@ -201,8 +227,114 @@ if "username" not in st.session_state:
 if "full_name" not in st.session_state:
     st.session_state["full_name"] = "Guest Speaker"
 
+logo_path = os.path.join(os.path.dirname(__file__), "assets", "toastmasters_logo.svg")
+
 # ------------------------------------------------------------------------------
-# 3. Helper Functions
+# 3. WEBSITE AUTHENTICATION GATE (Visible when not logged in)
+# ------------------------------------------------------------------------------
+if not st.session_state["logged_in"]:
+    # Hide sidebar while on login gate
+    st.markdown(
+        """
+        <style>
+        [data-testid="stSidebar"] {
+            display: none;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    # Centered modern web portal container
+    c_left, c_center, c_right = st.columns([1, 2, 1])
+
+    with c_center:
+        st.markdown("<div style='height: 1.5rem;'></div>", unsafe_allow_html=True)
+        if os.path.exists(logo_path):
+            st.image(logo_path, use_container_width=True)
+        else:
+            st.markdown("## 🎙️ TOASTMASTERS INTERNATIONAL")
+
+        st.markdown('<div class="portal-title">AI Speech Evaluator Portal</div>', unsafe_allow_html=True)
+        st.markdown('<div class="portal-subtitle">Sign in to access your speech analytics and podium evaluations</div>', unsafe_allow_html=True)
+
+        tab_login, tab_signup, tab_admin = st.tabs(["🔑 Student Sign In", "📝 Create Account", "🛡️ Admin Access"])
+
+        with tab_login:
+            st.markdown("#### Student Sign In")
+            with st.form("student_login_form"):
+                u_name = st.text_input("Username:", placeholder="e.g. sarah", key="login_u")
+                u_pass = st.text_input("Password:", type="password", placeholder="••••••••", key="login_p")
+                submit_login = st.form_submit_button("Sign In to Evaluator", use_container_width=True)
+
+                if submit_login:
+                    user = db.authenticate_student(u_name, u_pass)
+                    if user:
+                        st.session_state["logged_in"] = True
+                        st.session_state["user_role"] = "student"
+                        st.session_state["username"] = user["username"]
+                        st.session_state["full_name"] = user["full_name"]
+                        db.set_active_speaker(user["username"], user["full_name"])
+                        st.success(f"Welcome back, {user['full_name']}!")
+                        time.sleep(0.4)
+                        st.rerun()
+                    else:
+                        st.error("Invalid username or password. Please verify and try again.")
+
+        with tab_signup:
+            st.markdown("#### Student Registration")
+            with st.form("student_signup_form"):
+                su_fullname = st.text_input("Full Name:", placeholder="e.g. Sarah Jenkins", key="su_fn")
+                su_username = st.text_input("Choose Username:", placeholder="e.g. sarah", key="su_un")
+                su_password = st.text_input("Create Password:", type="password", placeholder="••••••••", key="su_pw")
+                submit_signup = st.form_submit_button("Create Account & Sign In", use_container_width=True)
+
+                if submit_signup:
+                    ok, msg = db.register_student(su_username, su_fullname, su_password)
+                    if ok:
+                        st.session_state["logged_in"] = True
+                        st.session_state["user_role"] = "student"
+                        st.session_state["username"] = su_username.strip().lower()
+                        st.session_state["full_name"] = su_fullname.strip()
+                        db.set_active_speaker(su_username.strip().lower(), su_fullname.strip())
+                        st.success(f"Welcome to Toastmasters, {su_fullname}!")
+                        time.sleep(0.5)
+                        st.rerun()
+                    else:
+                        st.error(msg)
+
+        with tab_admin:
+            st.markdown("#### Meeting Evaluator / Administrator")
+            with st.form("admin_login_form"):
+                admin_pw = st.text_input("Master Password:", type="password", placeholder="Enter Master Password", key="ad_pw")
+                submit_admin = st.form_submit_button("Unlock Admin Portal", use_container_width=True)
+
+                if submit_admin:
+                    if db.verify_admin_master_password(admin_pw):
+                        st.session_state["logged_in"] = True
+                        st.session_state["user_role"] = "admin"
+                        st.session_state["username"] = "admin"
+                        st.session_state["full_name"] = "Meeting Administrator"
+                        st.success("Admin portal unlocked!")
+                        time.sleep(0.4)
+                        st.rerun()
+                    else:
+                        st.error("Incorrect Master Password.")
+
+        st.markdown("---")
+        st.markdown(
+            "<div style='text-align:center; font-size: 0.85rem; opacity: 0.7;'>"
+            "🔒 Protected Speech Evaluator Web Portal · Raspberry Pi Standalone Appliance"
+            "</div>",
+            unsafe_allow_html=True,
+        )
+
+    # Stop execution here: Unauthenticated users CANNOT see the evaluator dashboard!
+    st.stop()
+
+
+# ------------------------------------------------------------------------------
+# 4. Helper Functions (Loaded for Authenticated Users)
 # ------------------------------------------------------------------------------
 def format_timestamp(seconds: float) -> str:
     """Format seconds into MM:SS string."""
@@ -236,117 +368,60 @@ def get_available_reports() -> List[str]:
 
 
 # ------------------------------------------------------------------------------
-# 4. Auto-Refresh Setup (Active in Live Evaluation Mode)
+# 5. Authenticated Sidebar Branding & Navigation
 # ------------------------------------------------------------------------------
-refresh_rate_sec = 3
-try:
-    from streamlit_autorefresh import st_autorefresh
-    st_autorefresh(interval=refresh_rate_sec * 1000, key="speech_evaluator_autorefresh")
-except ImportError:
-    st.markdown(f'<meta http-equiv="refresh" content="{refresh_rate_sec}">', unsafe_allow_html=True)
-    st.sidebar.caption("⚡ Auto-refresh active (browser meta tag)")
-
-
-# ------------------------------------------------------------------------------
-# 5. Sidebar Branding & Navigation
-# ------------------------------------------------------------------------------
-# Display Local Vector Toastmasters Logo (Reliable offline)
-logo_path = os.path.join(os.path.dirname(__file__), "assets", "toastmasters_logo.svg")
 if os.path.exists(logo_path):
     st.sidebar.image(logo_path, use_container_width=True)
 else:
-    st.sidebar.markdown("### 🎙️ TOASTMASTERS INTERNATIONAL")
+    st.sidebar.markdown("### 🎙️ TOASTMASTERS")
 
 st.sidebar.title("Speech Evaluator")
 st.sidebar.markdown("**Host:** Raspberry Pi 3")
 
-# ------------------------------------------------------------------------------
-# 6. Sidebar: User Account / Authentication Panel
-# ------------------------------------------------------------------------------
-st.sidebar.markdown("---")
+# User Badge & Logout in Sidebar
+role_icon = "🛡️" if st.session_state["user_role"] == "admin" else "👤"
+st.sidebar.markdown(f"**{role_icon} Current User:**")
+st.sidebar.markdown(f"### {st.session_state['full_name']}")
+st.sidebar.caption(f"Role: {st.session_state['user_role'].title()} (@{st.session_state['username']})")
 
-if not st.session_state["logged_in"]:
-    st.sidebar.subheader("👤 User Access")
-    auth_tab = st.sidebar.radio(
-        "Choose Login Type:",
-        ["Student Login", "Sign Up", "Admin Portal"],
-        key="auth_choice",
-    )
-
-    if auth_tab == "Student Login":
-        login_user = st.sidebar.text_input("Username:", key="s_login_user")
-        login_pass = st.sidebar.text_input("Password:", type="password", key="s_login_pass")
-        if st.sidebar.button("Log In as Student", key="btn_student_login"):
-            user = db.authenticate_student(login_user, login_pass)
-            if user:
-                st.session_state["logged_in"] = True
-                st.session_state["user_role"] = "student"
-                st.session_state["username"] = user["username"]
-                st.session_state["full_name"] = user["full_name"]
-                db.set_active_speaker(user["username"], user["full_name"])
-                st.sidebar.success(f"Welcome, {user['full_name']}!")
-                st.rerun()
-            else:
-                st.sidebar.error("Invalid username or password.")
-
-    elif auth_tab == "Sign Up":
-        new_name = st.sidebar.text_input("Full Name:", key="su_name", placeholder="e.g. John Doe")
-        new_user = st.sidebar.text_input("Choose Username:", key="su_user")
-        new_pass = st.sidebar.text_input("Choose Password:", type="password", key="su_pass")
-        if st.sidebar.button("Create Account", key="btn_signup"):
-            ok, msg = db.register_student(new_user, new_name, new_pass)
-            if ok:
-                st.sidebar.success(msg)
-            else:
-                st.sidebar.error(msg)
-
-    elif auth_tab == "Admin Portal":
-        admin_pass = st.sidebar.text_input("Master Password:", type="password", key="admin_master_pass")
-        if st.sidebar.button("Login as Admin", key="btn_admin_login"):
-            if db.verify_admin_master_password(admin_pass):
-                st.session_state["logged_in"] = True
-                st.session_state["user_role"] = "admin"
-                st.session_state["username"] = "admin"
-                st.session_state["full_name"] = "Meeting Administrator"
-                st.sidebar.success("Admin portal unlocked!")
-                st.rerun()
-            else:
-                st.sidebar.error("Incorrect Master Password.")
-
-else:
-    # User is logged in
-    role_icon = "🛡️" if st.session_state["user_role"] == "admin" else "👤"
-    st.sidebar.markdown(f"**{role_icon} Logged in as:**")
-    st.sidebar.markdown(f"### {st.session_state['full_name']}")
-    st.sidebar.caption(f"Role: {st.session_state['user_role'].title()} (@{st.session_state['username']})")
-
-    if st.sidebar.button("🚪 Log Out"):
-        st.session_state["logged_in"] = False
-        st.session_state["user_role"] = "guest"
-        st.session_state["username"] = "guest"
-        st.session_state["full_name"] = "Guest Speaker"
-        st.rerun()
+if st.sidebar.button("🚪 Log Out", use_container_width=True):
+    st.session_state["logged_in"] = False
+    st.session_state["user_role"] = "guest"
+    st.session_state["username"] = "guest"
+    st.session_state["full_name"] = "Guest Speaker"
+    st.rerun()
 
 st.sidebar.markdown("---")
 
-# Main View Navigation Selection
+# Navigation Options Based on Role
 if st.session_state["user_role"] == "admin":
     current_view = st.sidebar.radio(
-        "Navigation:",
+        "Navigation Menu:",
         ["🎙️ Live Speech Evaluation", "👥 Student Directory & Analytics", "📋 All Speech Records"],
-        key="admin_nav",
-    )
-elif st.session_state["user_role"] == "student":
-    current_view = st.sidebar.radio(
-        "Navigation:",
-        ["🎙️ Live Speech Evaluation", "📊 My Speech History"],
-        key="student_nav",
+        key="nav_admin",
     )
 else:
-    current_view = "🎙️ Live Speech Evaluation"
+    current_view = st.sidebar.radio(
+        "Navigation Menu:",
+        ["🎙️ Live Speech Evaluation", "📊 My Speech History"],
+        key="nav_student",
+    )
 
 # ------------------------------------------------------------------------------
-# 7. Sidebar: Session Selector (Available in Live Evaluation View)
+# 6. Auto-Refresh Setup (Active ONLY in Live Speech View to prevent form disruption)
+# ------------------------------------------------------------------------------
+if current_view == "🎙️ Live Speech Evaluation":
+    refresh_rate_sec = 3
+    try:
+        from streamlit_autorefresh import st_autorefresh
+        st_autorefresh(interval=refresh_rate_sec * 1000, key="speech_evaluator_autorefresh")
+    except ImportError:
+        st.markdown(f'<meta http-equiv="refresh" content="{refresh_rate_sec}">', unsafe_allow_html=True)
+        st.sidebar.caption("⚡ Auto-refresh active (browser meta tag)")
+
+
+# ------------------------------------------------------------------------------
+# 7. Sidebar: Session Selector (Live Speech Mode)
 # ------------------------------------------------------------------------------
 if current_view == "🎙️ Live Speech Evaluation":
     available_reports = get_available_reports()
@@ -365,7 +440,7 @@ if current_view == "🎙️ Live Speech Evaluation":
     else:
         st.sidebar.info("No speech reports found yet.")
 
-    if st.sidebar.button("🔄 Manual Refresh"):
+    if st.sidebar.button("🔄 Manual Refresh", use_container_width=True):
         st.rerun()
 
 st.sidebar.markdown("---")
@@ -396,7 +471,7 @@ if current_view == "🎙️ Live Speech Evaluation":
             all_students = db.get_all_students()
             options = ["Guest Speaker"] + [f"{s['full_name']} ({s['username']})" for s in all_students]
             selected_speaker = st.selectbox("Assign Active Speaker:", options, index=0)
-            if st.button("Set Active"):
+            if st.button("Set Active Speaker", use_container_width=True):
                 if selected_speaker == "Guest Speaker":
                     db.set_active_speaker("guest", "Guest Speaker")
                 else:
@@ -421,9 +496,17 @@ if current_view == "🎙️ Live Speech Evaluation":
         )
         st.stop()
 
-    # Link report to database for student history if not already recorded
+    # Link report to database for student history
     if selected_file == "evaluation_report.json" or "reports" in selected_file:
-        db.record_speech_session(report, selected_file)
+        if st.session_state["user_role"] == "student":
+            db.record_speech_session(
+                report,
+                selected_file,
+                override_username=st.session_state["username"],
+                override_name=st.session_state["full_name"],
+            )
+        else:
+            db.record_speech_session(report, selected_file)
 
     # Extract Data
     session_id = report.get("session_id", "N/A")
@@ -591,7 +674,6 @@ if current_view == "🎙️ Live Speech Evaluation":
                 sug_pills = "".join([f"<span class='tooltip-suggestion'>{html.escape(s)}</span>" for s in suggestions[:2]])
                 sug_html = f"<div style='margin-top:6px;'><b>Suggested Fix:</b> {sug_pills}</div>"
 
-            # Check if context_text is in highlighted text
             esc_context = html.escape(context_text)
             if esc_context and esc_context in highlighted_text:
                 if 0 <= c_off < len(context_text) and (c_off + c_len) <= len(context_text) and c_len > 0:
@@ -680,7 +762,6 @@ elif current_view == "📊 My Speech History":
                 c3.write(f"🗣️ **Fillers:** {sp['total_fillers']} (Pauses: {sp['vocalized_pauses']}, Crutches: {sp['verbal_crutches']})")
                 c4.write(f"📖 **Grammar Errors:** {sp['grammar_errors']}")
 
-                # Load report file if available
                 rep_path = sp.get("report_file", "")
                 if rep_path and os.path.exists(rep_path):
                     sp_rep = load_report_file(rep_path)
@@ -733,7 +814,7 @@ elif current_view == "👥 Student Directory & Analytics":
             use_container_width=True,
         )
     else:
-        st.info("No students registered yet. Students can register anytime using the sidebar sign-up form.")
+        st.info("No students registered yet. Students can register anytime using the registration form.")
 
 
 # ==============================================================================
