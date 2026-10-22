@@ -118,17 +118,23 @@ NOTE:
                     if timer_start:
                         elapsed = int(time.time() - timer_start)
                         mins, secs = divmod(elapsed, 60)
-                        print(f"\n<<< [EVENT] SWITCH FLIPPED OFF! Final Duration: {mins:02d}:{secs:02d} >>>\n")
+                        t_str = f"{mins:02d}:{secs:02d}"
+                        print(f"\n<<< [EVENT] SWITCH FLIPPED OFF! Final Duration: {t_str} >>>\n")
+                        if lcd:
+                            lcd.cursor_pos = (0, 0)
+                            lcd.write_string(f"Time: {t_str}     "[:16])
+                            lcd.cursor_pos = (1, 0)
+                            lcd.write_string("Done!           ")
                     else:
                         print("\n<<< [EVENT] Switch is OFF (Waiting for ON) >>>")
+                        if lcd:
+                            lcd.cursor_pos = (0, 0)
+                            lcd.write_string("Time: 00:00     ")
+                            lcd.cursor_pos = (1, 0)
+                            lcd.write_string("Ready...        ")
                     timer_start = None
-                    if lcd:
-                        lcd.cursor_pos = (0, 0)
-                        lcd.write_string("Time: 00:00     ")
-                        lcd.cursor_pos = (1, 0)
-                        lcd.write_string("Ready...        ")
 
-            # Active timer tick while ON
+            # Active timer tick while ON (strictly MM:SS format)
             if is_on and timer_start:
                 elapsed = int(time.time() - timer_start)
                 mins, secs = divmod(elapsed, 60)
@@ -136,8 +142,10 @@ NOTE:
                 sys.stdout.write(f"\r⏱️  Live Timer: {t_str} (Switch is ON / Recording) ")
                 sys.stdout.flush()
                 if lcd:
-                    lcd.cursor_pos = (0, 6)
-                    lcd.write_string(t_str)
+                    lcd.cursor_pos = (0, 0)
+                    lcd.write_string(f"Time: {t_str}     "[:16])
+                    lcd.cursor_pos = (1, 0)
+                    lcd.write_string("Recording...    ")
 
             time.sleep(0.2)
     except KeyboardInterrupt:

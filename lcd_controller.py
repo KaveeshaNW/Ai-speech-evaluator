@@ -9,7 +9,7 @@ Evaluation metrics (Ah-Counter and Grammarian) are moved to the Streamlit web da
 import logging
 import threading
 import time
-from typing import Optional
+from typing import Any, Optional
 
 logger = logging.getLogger("speech_evaluator.lcd")
 
@@ -131,13 +131,50 @@ class LCDController:
             except Exception as e:
                 logger.error(f"[LCD] I2C write error: {e}")
 
-    def display_timer(self, time_str: str, status: str = "Recording...") -> None:
+    @staticmethod
+    def format_to_mmss(time_val: Any) -> str:
+        """
+        Convert any duration input (int, float, or string) strictly into MM:SS format.
+        Examples:
+            36       -> '00:36'
+            36.0     -> '00:36'
+            '36'     -> '00:36'
+            '00:36'  -> '00:36'
+            125      -> '02:05'
+        """
+        if time_val is None:
+            return "00:00"
+        if isinstance(time_val, (int, float)):
+            mins = int(time_val // 60)
+            secs = int(time_val % 60)
+            return f"{mins:02d}:{secs:02d}"
+        s_val = str(time_val).strip()
+        if ":" in s_val:
+            parts = s_val.split(":")
+            if len(parts) == 2:
+                try:
+                    m = int(parts[0])
+                    s = int(parts[1])
+                    return f"{m:02d}:{s:02d}"
+                except ValueError:
+                    pass
+            return s_val
+        try:
+            f_val = float(s_val)
+            mins = int(f_val // 60)
+            secs = int(f_val % 60)
+            return f"{mins:02d}:{secs:02d}"
+        except ValueError:
+            return s_val
+
+    def display_timer(self, time_str: Any, status: str = "Recording...") -> None:
         """
         Primary display format for timer:
         Line 1: 'Time: MM:SS'
         Line 2: Status message (e.g. 'Recording...', 'Evaluating...', 'Ready...', 'Done!')
         """
-        line1 = f"Time: {time_str}"
+        formatted_time = self.format_to_mmss(time_str)
+        line1 = f"Time: {formatted_time}"
         line2 = status
         self.write_lines(line1, line2)
 
