@@ -38,18 +38,22 @@ class SwitchController:
         self._is_running = False
         self._thread: Optional[threading.Thread] = None
         self._last_state: Optional[bool] = None  # True = ON (LOW), False = OFF (HIGH)
+        self._backend = "none"  # "rpi.gpio", "gpiozero", "simulate"
         self._gpio = None
+        self._button = None
         self._simulated_state: bool = False  # False = OFF, True = ON
 
         self._init_gpio()
 
     def _init_gpio(self) -> None:
-        """Initialize RPi.GPIO or switch to simulation mode."""
+        """Initialize RPi.GPIO or gpiozero or switch to simulation mode."""
         if self.simulate:
             logger.info(f"[Switch] Simulation mode active for GPIO pin {self.gpio_pin}.")
+            self._backend = "simulate"
             self._last_state = False  # Start in OFF state
             return
 
+        # 1. Try RPi.GPIO
         try:
             import RPi.GPIO as GPIO
 
@@ -61,34 +65,64 @@ class SwitchController:
             # Read initial state: GPIO.LOW = Switch ON, GPIO.HIGH = Switch OFF
             initial_val = self._gpio.input(self.gpio_pin)
             self._last_state = (initial_val == self._gpio.LOW)
+            self._backend = "rpi.gpio"
             logger.info(
-                f"[Switch] Initialized on BCM GPIO {self.gpio_pin}. "
+                f"[Switch] Initialized via RPi.GPIO on BCM GPIO {self.gpio_pin} (Physical Pin 12). "
                 f"Initial state: {'ON' if self._last_state else 'OFF'}"
             )
-        except Exception as e:
-            logger.warning(
-                f"[Switch] Failed to initialize RPi.GPIO ({e}). "
-                "Falling back to simulated switch mode."
+            return
+        except Exception as e_rpi:
+            logger.debug(f"[Switch] RPi.GPIO initialization failed ({e_rpi}). Trying gpiozero fallback...")
+
+        # 2. Try gpiozero fallback
+        try:
+            from gpiozero import Button
+
+            self._button = Button(
+                self.gpio_pin,
+                pull_up=True,
+                bounce_time=max(0.01, self.bounce_time_ms / 1000.0),
             )
-            self.simulate = True
-            self._gpio = None
-            self._last_state = False
+            self._last_state = bool(self._button.is_pressed)
+            self._backend = "gpiozero"
+            logger.info(
+                f"[Switch] Initialized via gpiozero on BCM GPIO {self.gpio_pin} (Physical Pin 12). "
+                f"Initial state: {'ON' if self._last_state else 'OFF'}"
+            )
+            return
+        except Exception as e_gz:
+            logger.warning(
+                f"[Switch] Failed to initialize hardware GPIO via RPi.GPIO ({e_rpi}) or gpiozero ({e_gz}). "
+                "Falling back to simulated switch mode. (Hint: install with 'pip install RPi.GPIO' or 'pip install gpiozero')."
+            )
+
+        self.simulate = True
+        self._backend = "simulate"
+        self._gpio = None
+        self._button = None
+        self._last_state = False
 
     def is_switch_on(self) -> bool:
         """
         Thread-safe query of current switch state.
-        Returns True if switch is ON (GPIO.LOW), False if OFF (GPIO.HIGH).
+        Returns True if switch is ON (GPIO.LOW / pressed to GND), False if OFF.
         """
         with self._lock:
-            if self.simulate:
+            if self.simulate or self._backend == "simulate":
                 return self._simulated_state
 
-            if self._gpio is not None:
+            if self._backend == "rpi.gpio" and self._gpio is not None:
                 try:
                     val = self._gpio.input(self.gpio_pin)
                     return val == self._gpio.LOW
                 except Exception as e:
-                    logger.error(f"[Switch] Error reading GPIO: {e}")
+                    logger.error(f"[Switch] Error reading RPi.GPIO: {e}")
+                    return False
+            elif self._backend == "gpiozero" and self._button is not None:
+                try:
+                    return bool(self._button.is_pressed)
+                except Exception as e:
+                    logger.error(f"[Switch] Error reading gpiozero: {e}")
                     return False
             return False
 
@@ -152,12 +186,22 @@ class SwitchController:
 
             try:
                 # Read physical state
-                raw_is_on = (self._gpio.input(self.gpio_pin) == self._gpio.LOW)
+                if self._backend == "rpi.gpio" and self._gpio is not None:
+                    raw_is_on = (self._gpio.input(self.gpio_pin) == self._gpio.LOW)
+                elif self._backend == "gpiozero" and self._button is not None:
+                    raw_is_on = bool(self._button.is_pressed)
+                else:
+                    raw_is_on = False
 
                 if raw_is_on != self._last_state:
                     # Potential transition, wait debounce time and re-sample
                     time.sleep(debounce_secs)
-                    confirmed_is_on = (self._gpio.input(self.gpio_pin) == self._gpio.LOW)
+                    if self._backend == "rpi.gpio" and self._gpio is not None:
+                        confirmed_is_on = (self._gpio.input(self.gpio_pin) == self._gpio.LOW)
+                    elif self._backend == "gpiozero" and self._button is not None:
+                        confirmed_is_on = bool(self._button.is_pressed)
+                    else:
+                        confirmed_is_on = raw_is_on
 
                     if confirmed_is_on == raw_is_on:
                         with self._lock:
@@ -187,7 +231,7 @@ class SwitchController:
     def _cleanup_gpio(self) -> None:
         """Clean up GPIO reservation."""
         with self._lock:
-            if self._gpio is not None:
+            if self._backend == "rpi.gpio" and self._gpio is not None:
                 try:
                     self._gpio.cleanup(self.gpio_pin)
                     logger.info(f"[Switch] Cleaned up GPIO {self.gpio_pin}.")
@@ -195,3 +239,9 @@ class SwitchController:
                     logger.error(f"[Switch] GPIO cleanup error: {e}")
                 finally:
                     self._gpio = None
+            elif self._backend == "gpiozero" and self._button is not None:
+                try:
+                    self._button.close()
+                except Exception:
+                    pass
+                self._button = None
