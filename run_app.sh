@@ -32,7 +32,10 @@ amixer -c 1 set 'Capture' 100% unmute cap 2>/dev/null || true
 amixer -c 2 set 'Mic' 100% unmute cap 2>/dev/null || true
 amixer -c 2 set 'Capture' 100% unmute cap 2>/dev/null || true
 
-# 4. Activate Python virtual environment
+# 4. Ensure I2C kernel module is loaded for the 16x2 LCD display
+sudo modprobe i2c-dev 2>/dev/null || true
+
+# 5. Activate Python virtual environment
 if [ -f "/home/astro/speech_env/bin/activate" ]; then
     source "/home/astro/speech_env/bin/activate"
 elif [ -f "$HOME/speech_env/bin/activate" ]; then
