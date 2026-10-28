@@ -25,6 +25,11 @@ echo ""
 # Ensure launcher script is executable
 chmod +x "$LAUNCHER"
 
+# Ensure i2c-dev kernel module is loaded automatically on boot
+if ! grep -q "^i2c-dev" /etc/modules 2>/dev/null; then
+    echo "i2c-dev" | tee -a /etc/modules > /dev/null 2>&1 || true
+fi
+
 # Check if .env exists
 if [ ! -f "$PROJECT_DIR/.env" ]; then
     echo "[!] WARNING: No .env file found in $PROJECT_DIR."
