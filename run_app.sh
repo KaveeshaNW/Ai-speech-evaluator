@@ -27,8 +27,12 @@ fi
 # 3. Automatically unmute and set USB microphone capture volume to 100% in ALSA
 amixer set 'Mic' 100% unmute cap 2>/dev/null || true
 amixer set 'Capture' 100% unmute cap 2>/dev/null || true
+amixer -c 0 set 'Mic' 100% unmute cap 2>/dev/null || true
+amixer -c 0 set 'Capture' 100% unmute cap 2>/dev/null || true
 amixer -c 1 set 'Mic' 100% unmute cap 2>/dev/null || true
 amixer -c 1 set 'Capture' 100% unmute cap 2>/dev/null || true
+amixer -c 1 sset 'Mic' 100% cap 2>/dev/null || true
+amixer -c 1 sset 'Capture' 100% cap 2>/dev/null || true
 amixer -c 2 set 'Mic' 100% unmute cap 2>/dev/null || true
 amixer -c 2 set 'Capture' 100% unmute cap 2>/dev/null || true
 

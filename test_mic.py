@@ -26,17 +26,38 @@ def run_unmute():
     commands = [
         "amixer set 'Mic' 100% unmute cap 2>/dev/null || true",
         "amixer set 'Capture' 100% unmute cap 2>/dev/null || true",
+        "amixer -c 0 set 'Mic' 100% unmute cap 2>/dev/null || true",
+        "amixer -c 0 set 'Capture' 100% unmute cap 2>/dev/null || true",
         "amixer -c 1 set 'Mic' 100% unmute cap 2>/dev/null || true",
         "amixer -c 1 set 'Capture' 100% unmute cap 2>/dev/null || true",
+        "amixer -c 1 sset 'Mic' 100% cap 2>/dev/null || true",
+        "amixer -c 1 sset 'Capture' 100% cap 2>/dev/null || true",
+        "amixer -c 2 set 'Mic' 100% unmute cap 2>/dev/null || true",
+        "amixer -c 2 set 'Capture' 100% unmute cap 2>/dev/null || true",
     ]
     for cmd in commands:
         subprocess.run(cmd, shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+def check_alsa_hardware():
+    print("[*] Detecting ALSA recording hardware (arecord -l)...")
+    try:
+        out = subprocess.check_output(["arecord", "-l"], universal_newlines=True, stderr=subprocess.STDOUT)
+        cards = [line.strip() for line in out.splitlines() if line.startswith("card")]
+        for c in cards:
+            print(f"    {c}")
+        if not cards:
+            print("    [!] WARNING: No sound card found for recording! USB audio adapter may be unplugged.")
+    except Exception as e:
+        print(f"    [*] arecord note: {e}")
+
 
 def main():
     print("=" * 65)
     print(" AI SPEECH EVALUATOR - MICROPHONE & HARDWARE DIAGNOSTIC")
     print("=" * 65)
 
+    check_alsa_hardware()
     run_unmute()
 
     cfg = load_config()
@@ -45,7 +66,7 @@ def main():
     try:
         import pyaudio
     except ImportError:
-        print("[!] PyAudio not installed in this environment.")
+        print("[!] PyAudio not installed in this environment. Run: pip install pyaudio")
         return
 
     pa = pyaudio.PyAudio()
@@ -53,19 +74,23 @@ def main():
     print(f"[*] Found {device_count} audio device(s):")
 
     usb_device_idx = -1
+    first_input_idx = -1
     for i in range(device_count):
         try:
             info = pa.get_device_info_by_host_api_device_index(0, i)
             if info.get("maxInputChannels", 0) > 0:
+                if first_input_idx == -1:
+                    first_input_idx = i
                 name = info.get("name", "")
                 rate = int(info.get("defaultSampleRate", 0))
                 print(f"    [{i}] {name} ({rate}Hz, {info.get('maxInputChannels')} in)")
-                if "usb" in name.lower() or "m-305" in name.lower():
+                lower_name = name.lower()
+                if any(k in lower_name for k in ["usb", "m-305", "microphone", "mic", "pnp", "c-media", "codec", "sound"]):
                     usb_device_idx = i
         except Exception:
             pass
 
-    target_idx = usb_device_idx if usb_device_idx >= 0 else None
+    target_idx = usb_device_idx if usb_device_idx >= 0 else (first_input_idx if first_input_idx >= 0 else None)
     print(f"[*] Target recording device index: {target_idx}")
 
     # Open stream
@@ -94,41 +119,65 @@ def main():
         pa.terminate()
         return
 
+    duration_seconds = 5
+    total_chunks = int(chosen_rate / 1024 * duration_seconds)
+
     print("\n" + "=" * 65)
-    print(" 🎙️ RECORDING 4 SECONDS OF AUDIO... SPEAK INTO THE M-305 NOW!")
-    print(" (Say something with grammar mistakes like: 'They was talking and we goes there')")
+    print(" 🎙️ RECORDING 5 SECONDS OF AUDIO... SPEAK INTO THE M-305 NOW!")
+    print(" (Say something loud like: 'Hello Toastmasters testing 1 2 3')")
     print("=" * 65)
+    print(" Live VU Meter (dBFS):")
 
     frames = []
-    for _ in range(int(chosen_rate / 1024 * 4)):
-        data = stream.read(1024, exception_on_overflow=False)
-        frames.append(data)
+    peak_db = -96.0
 
+    for _ in range(total_chunks):
+        try:
+            data = stream.read(1024, exception_on_overflow=False)
+            frames.append(data)
+
+            count = len(data) // 2
+            if count > 0:
+                shorts = struct.unpack(f"{count}h", data)
+                sum_sq = sum(s * s for s in shorts)
+                rms = math.sqrt(sum_sq / count)
+                db = 20 * math.log10(max(rms, 1.0) / 32767.0)
+                db = max(-96.0, db)
+                if db > peak_db:
+                    peak_db = db
+
+                clamped_db = max(-60.0, min(0.0, db))
+                bar_len = int(((clamped_db + 60.0) / 60.0) * 30)
+                meter = "=" * bar_len + " " * (30 - bar_len)
+                status = " [VOICE DETECTED]" if db > -35.0 else ""
+                sys.stdout.write(f"\r    [{meter}] {db:5.1f} dBFS{status.ljust(18)}")
+                sys.stdout.flush()
+        except Exception as e:
+            print(f"\n[-] Error reading stream: {e}")
+            break
+
+    sys.stdout.write("\n")
     stream.stop_stream()
     stream.close()
     pa.terminate()
 
     pcm_data = b"".join(frames)
-
-    # Calculate Volume Level (RMS dBFS)
-    count = len(pcm_data) // 2
-    shorts = struct.unpack(f"{count}h", pcm_data)
-    mean_sq = sum(s * s for s in shorts) / max(1, count)
-    rms = math.sqrt(mean_sq)
-    rms_db = 20 * math.log10(max(rms, 1.0) / 32767.0)
-
     print(f"\n[*] Audio Capture Complete: {len(pcm_data)} bytes recorded.")
-    print(f"[*] Measured Volume Level: {rms_db:.1f} dBFS")
+    print(f"[*] Peak Volume Level: {peak_db:.1f} dBFS")
 
-    if rms_db < -50.0:
+    if peak_db < -45.0:
         print("\n" + "!" * 65)
-        print(" [WARNING] SILENCE DETECTED! Volume is near dead silence.")
-        print(" 1. Check the physical switch on the M-305 handle (Slide to ON).")
-        print(" 2. Ensure microphone 3.5mm plug is firmly seated in the PINK jack.")
-        print(" 3. Run 'alsamixer' -> Press F4 -> Press Space to enable [CAPTUR] -> Press Up Arrow to 100%.")
+        print(" [WARNING] SILENCE OR VERY LOW AUDIO DETECTED!")
+        print(" Checklist to fix:")
+        print(" 1. Check physical switch on Carol M-305 handle (Slide UP to 'ON').")
+        print(" 2. Ensure microphone 3.5mm plug is firmly seated in the PINK jack (Mic).")
+        print("    (Do NOT plug into the Green headphone jack).")
+        print(" 3. Check ALSA mixer volume:")
+        print("    Run 'alsamixer' -> Press F6 -> Select USB Audio Card.")
+        print("    Press F4 (Capture) -> Press Space to toggle [CAPTURE] -> Press Up Arrow to 100%.")
         print("!" * 65)
     else:
-        print("[+] Strong audio signal detected! Volume level is healthy.")
+        print("[+] Strong audio signal detected! Microphone is capturing clearly.")
 
     # Transcribe via Deepgram if configured
     if cfg.is_deepgram_configured():

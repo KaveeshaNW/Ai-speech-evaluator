@@ -107,19 +107,23 @@ class AudioCapture:
 
         # Scan for USB audio devices
         device_count = self._pyaudio_instance.get_device_count()
+        first_input_idx = None
         for idx in range(device_count):
             try:
                 info = self._pyaudio_instance.get_device_info_by_host_api_device_index(0, idx)
                 if info.get("maxInputChannels", 0) > 0:
+                    if first_input_idx is None:
+                        first_input_idx = idx
                     name = info.get("name", "").lower()
-                    if "usb" in name or "m-305" in name or "microphone" in name:
+                    if any(k in name for k in ["usb", "m-305", "microphone", "mic", "pnp", "c-media", "codec", "sound"]):
                         logger.info(f"[Audio] Auto-detected USB Audio device: [{idx}] {info.get('name')}")
                         return idx
             except Exception:
                 continue
 
-        logger.info(f"[Audio] Using default audio input device: index {default_index}")
-        return default_index
+        chosen = first_input_idx if first_input_idx is not None else default_index
+        logger.info(f"[Audio] Using fallback audio input device: index {chosen}")
+        return chosen
 
     @staticmethod
     def list_devices() -> List[Tuple[int, str, int, float]]:
