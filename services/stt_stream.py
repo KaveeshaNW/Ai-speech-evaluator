@@ -165,9 +165,9 @@ class STTStreamManager:
                 self._is_connected = False
                 self._connection = None
 
-        # Check if live stream already produced transcripts
+        # Check if live stream already produced non-empty transcripts
+        has_transcript = bool(self.get_full_transcript().strip())
         with self._lock:
-            has_transcript = bool(self._transcript_chunks)
             buffer_len = len(self._audio_buffer)
 
         # If live stream didn't produce transcript, transcribe captured audio buffer via Nova-2 REST API

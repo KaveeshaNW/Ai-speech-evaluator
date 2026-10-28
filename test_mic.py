@@ -199,16 +199,48 @@ def main():
             )
             if resp.status_code == 200:
                 data = resp.json()
-                transcript = data.get("results", {}).get("channels", [{}])[0].get("alternatives", [{}])[0].get("transcript", "")
+                alt = data.get("results", {}).get("channels", [{}])[0].get("alternatives", [{}])[0]
+                transcript = alt.get("transcript", "")
+                words = alt.get("words", [])
                 print(f"[+] DEEPGRAM TRANSCRIPT: \"{transcript}\"")
 
                 if transcript:
                     print("\n[*] Sending transcript to Grammarian engine...")
                     engine = GrammarianEngine()
                     issues = engine.check_text_sync(transcript)
+                    engine._issues = issues
                     print(f"[+] Identified Spoken Grammar Issues: {len(issues)}")
                     for idx, issue in enumerate(issues):
                         print(f"    Issue #{idx+1}: {issue.rule_id} -> {issue.message} | Suggestions: {issue.suggestions}")
+
+                    # Publish speech report directly to the website dashboard and database
+                    try:
+                        from services.ah_counter import AhCounter
+                        from services.report_generator import ReportGenerator
+                        from services.auth_db import AuthDB
+
+                        ah = AhCounter()
+                        if words:
+                            ah.process_words(words)
+
+                        rep_gen = ReportGenerator()
+                        now_t = time.time()
+                        rep_path, rep_data = rep_gen.generate(
+                            session_id=datetime.now().strftime("%Y%m%d_%H%M%S"),
+                            start_time=now_t - duration_seconds,
+                            end_time=now_t,
+                            full_transcript=transcript,
+                            ah_counter=ah,
+                            grammarian=engine,
+                        )
+                        adb = AuthDB()
+                        adb.record_speech_session(rep_data, "evaluation_report.json")
+                        print("\n" + "=" * 65)
+                        print(" [+] Website dashboard successfully updated with your test speech!")
+                        print("     Open http://ai-speech-evaluator.local:8501 to see the report.")
+                        print("=" * 65)
+                    except Exception as rep_err:
+                        print(f"[*] Note: Could not update website report: {rep_err}")
                 else:
                     print("[!] Deepgram returned empty transcript (no speech detected in audio).")
             else:

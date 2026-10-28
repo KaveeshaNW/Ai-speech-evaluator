@@ -57,23 +57,24 @@ class AudioCapture:
             self._pyaudio_instance = pyaudio.PyAudio()
             self._actual_device_index = self._resolve_device_index()
 
-            # Probe hardware supported sample rate at boot
-            rates_to_try = [self.sample_rate]
-            for candidate in [44100, 48000, 16000, 8000]:
-                if candidate not in rates_to_try:
-                    rates_to_try.append(candidate)
-
+            # Probe hardware supported sample rate at boot by opening and closing test stream
+            rates_to_try = [16000, 44100, 48000]
+            dev_idx = self._actual_device_index if self._actual_device_index >= 0 else None
             for r in rates_to_try:
                 try:
-                    dev_idx = self._actual_device_index if self._actual_device_index >= 0 else None
-                    if self._pyaudio_instance.is_format_supported(
-                        r,
-                        input_device=dev_idx,
-                        input_channels=self.channels,
-                        input_format=pyaudio.paInt16,
-                    ):
-                        self.sample_rate = r
-                        break
+                    test_s = self._pyaudio_instance.open(
+                        format=pyaudio.paInt16,
+                        channels=self.channels,
+                        rate=r,
+                        input=True,
+                        input_device_index=dev_idx,
+                        frames_per_buffer=self.chunk_size,
+                    )
+                    test_s.stop_stream()
+                    test_s.close()
+                    self.sample_rate = r
+                    logger.info(f"[Audio] Hardware validated sample rate: {r}Hz on device [{self._actual_device_index}]")
+                    break
                 except Exception:
                     continue
 
@@ -182,8 +183,46 @@ class AudioCapture:
         except Exception:
             return -96.0
 
+    def _open_stream(self) -> bool:
+        """Open PyAudio stream at a supported hardware sample rate."""
+        if self.simulate or self._pyaudio_instance is None:
+            return False
+
+        if self._stream is not None:
+            return True
+
+        import pyaudio
+
+        rates_to_try = [self.sample_rate]
+        for candidate in [16000, 44100, 48000]:
+            if candidate not in rates_to_try:
+                rates_to_try.append(candidate)
+
+        target_idx = self._actual_device_index if self._actual_device_index >= 0 else None
+        for rate in rates_to_try:
+            try:
+                self._stream = self._pyaudio_instance.open(
+                    format=pyaudio.paInt16,
+                    channels=self.channels,
+                    rate=rate,
+                    input=True,
+                    input_device_index=target_idx,
+                    frames_per_buffer=self.chunk_size,
+                )
+                self.sample_rate = rate
+                logger.info(
+                    f"[Audio] PyAudio stream opened successfully at {rate}Hz ({self.channels}ch, chunk={self.chunk_size}) on device [{target_idx}]."
+                )
+                return True
+            except Exception as ex:
+                logger.debug(f"[Audio] Rate {rate}Hz failed on device {target_idx}: {ex}")
+
+        logger.error("[Audio] Failed to open PyAudio input stream on all candidate sample rates. Switching to simulation.")
+        self.simulate = True
+        return False
+
     def start(self, on_data: Optional[Callable[[bytes], None]] = None) -> None:
-        """Start non-blocking audio capture in background thread."""
+        """Start audio capture in background thread."""
         with self._lock:
             if self._is_capturing:
                 return
@@ -191,13 +230,17 @@ class AudioCapture:
                 self.on_data_callback = on_data
             self._is_capturing = True
 
+            # Open hardware stream synchronously so sample_rate is immediately valid
+            if not self.simulate:
+                self._open_stream()
+
             self._thread = threading.Thread(
                 target=self._capture_worker,
                 name="AudioCaptureThread",
                 daemon=True,
             )
             self._thread.start()
-            logger.info("[Audio] Capture thread started.")
+            logger.info(f"[Audio] Capture thread started at {self.sample_rate}Hz.")
 
     def stop(self) -> None:
         """Stop audio capture."""
@@ -224,38 +267,6 @@ class AudioCapture:
 
     def _capture_worker(self) -> None:
         """Continuous audio chunk acquisition loop."""
-        import pyaudio
-
-        if not self.simulate and self._pyaudio_instance is not None:
-            # USB audio dongles often only support 44100Hz or 48000Hz in ALSA hw mode
-            rates_to_try = [self.sample_rate]
-            for candidate in [44100, 48000, 16000, 8000]:
-                if candidate not in rates_to_try:
-                    rates_to_try.append(candidate)
-
-            opened = False
-            for rate in rates_to_try:
-                try:
-                    self._stream = self._pyaudio_instance.open(
-                        format=pyaudio.paInt16,
-                        channels=self.channels,
-                        rate=rate,
-                        input=True,
-                        input_device_index=self._actual_device_index if self._actual_device_index >= 0 else None,
-                        frames_per_buffer=self.chunk_size,
-                    )
-                    self.sample_rate = rate
-                    opened = True
-                    logger.info(f"[Audio] PyAudio stream opened successfully at {rate}Hz ({self.channels}ch, chunk={self.chunk_size}).")
-                    break
-                except Exception as ex:
-                    logger.debug(f"[Audio] Rate {rate}Hz failed on device {self._actual_device_index}: {ex}")
-
-            if not opened:
-                logger.error("[Audio] Failed to open PyAudio input stream on all candidate sample rates. Switching to simulation.")
-                self.simulate = True
-
-        # Main acquisition loop
         while True:
             with self._lock:
                 if not self._is_capturing:
