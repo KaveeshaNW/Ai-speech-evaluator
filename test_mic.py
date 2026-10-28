@@ -8,6 +8,7 @@ Tests:
 5. Grammarian syntax evaluation.
 """
 
+import io
 import math
 import os
 import struct
@@ -15,7 +16,7 @@ import subprocess
 import sys
 import time
 import wave
-import io
+from datetime import datetime
 import requests
 
 from config import load_config
