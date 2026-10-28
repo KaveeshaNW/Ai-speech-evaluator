@@ -41,6 +41,7 @@ class LCDController:
         self._is_initialized = False
         self._last_line1 = ""
         self._last_line2 = ""
+        self._last_status = ""
 
         self._initialize_driver()
 
@@ -126,6 +127,7 @@ class LCDController:
                 assert self._lcd is not None
                 self._lcd.cursor_pos = (0, 0)
                 self._lcd.write_string(p_line1)
+                time.sleep(0.002)
                 self._lcd.cursor_pos = (1, 0)
                 self._lcd.write_string(p_line2)
             except Exception as e:
@@ -173,6 +175,11 @@ class LCDController:
         Line 1: 'Time: MM:SS'
         Line 2: Status message (e.g. 'Recording...', 'Evaluating...', 'Ready...', 'Done!')
         """
+        if status != self._last_status:
+            self._last_status = status
+            self.clear()
+            time.sleep(0.01)
+
         formatted_time = self.format_to_mmss(time_str)
         line1 = f"Time: {formatted_time}"
         line2 = status

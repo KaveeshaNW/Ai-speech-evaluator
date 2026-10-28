@@ -98,6 +98,7 @@ NOTE:
 
     last_state = None
     timer_start = None
+    last_lcd_time = ""
 
     try:
         while True:
@@ -106,14 +107,21 @@ NOTE:
             # State transition
             if is_on != last_state:
                 last_state = is_on
+                last_lcd_time = ""
                 if is_on:
                     timer_start = time.time()
                     print("\n>>> [EVENT] SWITCH FLIPPED ON! Starting live timer... <<<")
                     if lcd:
-                        lcd.cursor_pos = (0, 0)
-                        lcd.write_string("Time: 00:00     ")
-                        lcd.cursor_pos = (1, 0)
-                        lcd.write_string("Recording...    ")
+                        try:
+                            lcd.clear()
+                            time.sleep(0.01)
+                            lcd.cursor_pos = (0, 0)
+                            lcd.write_string("Time: 00:00     ")
+                            time.sleep(0.002)
+                            lcd.cursor_pos = (1, 0)
+                            lcd.write_string("Recording...    ")
+                        except Exception:
+                            pass
                 else:
                     if timer_start:
                         elapsed = int(time.time() - timer_start)
@@ -121,33 +129,50 @@ NOTE:
                         t_str = f"{mins:02d}:{secs:02d}"
                         print(f"\n<<< [EVENT] SWITCH FLIPPED OFF! Final Duration: {t_str} >>>\n")
                         if lcd:
-                            lcd.cursor_pos = (0, 0)
-                            lcd.write_string(f"Time: {t_str}     "[:16])
-                            lcd.cursor_pos = (1, 0)
-                            lcd.write_string("Done!           ")
+                            try:
+                                lcd.clear()
+                                time.sleep(0.01)
+                                lcd.cursor_pos = (0, 0)
+                                lcd.write_string(f"Time: {t_str}     "[:16])
+                                time.sleep(0.002)
+                                lcd.cursor_pos = (1, 0)
+                                lcd.write_string("Done!           ")
+                            except Exception:
+                                pass
                     else:
                         print("\n<<< [EVENT] Switch is OFF (Waiting for ON) >>>")
                         if lcd:
-                            lcd.cursor_pos = (0, 0)
-                            lcd.write_string("Time: 00:00     ")
-                            lcd.cursor_pos = (1, 0)
-                            lcd.write_string("Ready...        ")
+                            try:
+                                lcd.clear()
+                                time.sleep(0.01)
+                                lcd.cursor_pos = (0, 0)
+                                lcd.write_string("Time: 00:00     ")
+                                time.sleep(0.002)
+                                lcd.cursor_pos = (1, 0)
+                                lcd.write_string("Ready...        ")
+                            except Exception:
+                                pass
                     timer_start = None
 
-            # Active timer tick while ON (strictly MM:SS format)
+            # Active timer tick while ON (strictly MM:SS format, update ONLY when second changes)
             if is_on and timer_start:
                 elapsed = int(time.time() - timer_start)
                 mins, secs = divmod(elapsed, 60)
                 t_str = f"{mins:02d}:{secs:02d}"
                 sys.stdout.write(f"\r⏱️  Live Timer: {t_str} (Switch is ON / Recording) ")
                 sys.stdout.flush()
-                if lcd:
-                    lcd.cursor_pos = (0, 0)
-                    lcd.write_string(f"Time: {t_str}     "[:16])
-                    lcd.cursor_pos = (1, 0)
-                    lcd.write_string("Recording...    ")
+                if lcd and t_str != last_lcd_time:
+                    last_lcd_time = t_str
+                    try:
+                        lcd.cursor_pos = (0, 0)
+                        lcd.write_string(f"Time: {t_str}     "[:16])
+                        time.sleep(0.002)
+                        lcd.cursor_pos = (1, 0)
+                        lcd.write_string("Recording...    ")
+                    except Exception:
+                        pass
 
-            time.sleep(0.2)
+            time.sleep(0.1)
     except KeyboardInterrupt:
         print("\n\n[*] Switch test stopped.")
         if backend == "rpi.gpio":
